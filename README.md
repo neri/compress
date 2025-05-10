@@ -1,2 +1,1 @@
-# entropy
-My entropy coder
+# My entropy coding library
