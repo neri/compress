@@ -1,0 +1,2 @@
+# entropy
+My entropy coder
