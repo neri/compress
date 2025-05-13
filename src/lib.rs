@@ -15,6 +15,9 @@ pub mod num;
 pub mod slice_window;
 pub mod stats;
 
+#[path = "stk1/stk1.rs"]
+pub mod stk1;
+
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum DecodeError {
     InvalidInput,
@@ -22,7 +25,7 @@ pub enum DecodeError {
     OutOfMemory,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EncodeError {
     InvalidInput,
     InvalidData,
