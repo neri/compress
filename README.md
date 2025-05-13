@@ -1,4 +1,4 @@
-# My entropy coding library
+# My compression library (temp)
 
 ## References
 

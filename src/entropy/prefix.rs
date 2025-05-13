@@ -2,8 +2,8 @@
 //!
 //! See also: <https://en.wikipedia.org/wiki/Canonical_Huffman_code>
 
-use crate::bits::{BitSize, BitStreamReader, VarBitValue};
 use crate::num::Nibble;
+use crate::num::bits::{BitSize, BitStreamReader, VarBitValue};
 use crate::stats::*;
 use crate::*;
 use core::cmp;

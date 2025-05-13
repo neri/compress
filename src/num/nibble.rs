@@ -134,6 +134,22 @@ impl Nibble {
     }
 
     #[inline]
+    pub const fn checked_div(self, rhs: Self) -> Option<Self> {
+        match (self as u8).checked_div(rhs as u8) {
+            Some(v) => Self::new(v),
+            None => None,
+        }
+    }
+
+    #[inline]
+    pub const fn checked_rem(self, rhs: Self) -> Option<Self> {
+        match (self as u8).checked_rem(rhs as u8) {
+            Some(v) => Self::new(v),
+            None => None,
+        }
+    }
+
+    #[inline]
     pub const fn wrapping_add(self, rhs: Self) -> Self {
         Self::new_truncated((self as u8).wrapping_add(rhs as u8))
     }
@@ -163,6 +179,16 @@ impl Nibble {
         let lhs = self.clamp(Self::MIN, Self::MAX) as u8;
         let rhs = rhs.clamp(Self::MIN, Self::MAX) as u8;
         unsafe { Self::new_unchecked(lhs.saturating_sub(rhs)) }
+    }
+
+    #[inline]
+    pub const fn saturating_mul(self, rhs: Self) -> Self {
+        let lhs = self.clamp(Self::MIN, Self::MAX) as u8;
+        let rhs = rhs.clamp(Self::MIN, Self::MAX) as u8;
+        match lhs * rhs {
+            result @ 0..=15 => unsafe { Self::new_unchecked(result) },
+            _ => Self::MAX,
+        }
     }
 
     #[inline]

@@ -2,7 +2,7 @@
 //!
 //! See also: <https://en.wikipedia.org/wiki/Asymmetric_numeral_systems>
 
-use crate::{bits::BitSize, *};
+use crate::{num::bits::BitSize, *};
 
 const INIT_PROB: u8 = 0x80;
 const INIT_STATE: u32 = 0x1000;
