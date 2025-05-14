@@ -294,77 +294,6 @@ impl CanonicalPrefixCoder {
             content: compressed_table,
         })
     }
-
-    pub fn decode_prefix_table_from_bytes(
-        bytes: &[u8],
-        output_size: usize,
-        permutation_flavor: PermutationFlavor,
-    ) -> Result<Vec<u8>, DecodeError> {
-        let mut reader = BitStreamReader::new(bytes);
-        let mut output = Vec::<u8>::new();
-        Self::decode_prefix_tables(&mut reader, &mut output, &[output_size], permutation_flavor)?;
-        Ok(output)
-    }
-
-    pub fn decode_prefix_tables<'a>(
-        reader: &mut BitStreamReader<'a>,
-        output: &mut Vec<u8>,
-        output_sizes: &[usize],
-        permutation_flavor: PermutationFlavor,
-    ) -> Result<(), DecodeError> {
-        let permutation_order = permutation_flavor.permutation_order();
-        output.reserve(output_sizes.iter().fold(0, |a, v| a + v));
-
-        let num_prefixes = 4 + reader.read_nibble().ok_or(DecodeError::InvalidData)? as usize;
-        let mut prefixes = Vec::new();
-        for &index in permutation_order.iter().take(num_prefixes) {
-            let prefix_bit = reader.read(BitSize::Bit3).ok_or(DecodeError::InvalidData)?;
-            prefixes.push((index, prefix_bit as u8));
-        }
-
-        let decoder = CanonicalPrefixDecoder::new(&prefixes);
-        let mut limit = 0;
-        for size in output_sizes {
-            limit += size;
-            let mut prev = 8;
-            while output.len() < limit {
-                let decoded = decoder.decode(reader)? as u8;
-                match decoded {
-                    0 => {
-                        output.push(decoded);
-                    }
-                    1..=15 => {
-                        output.push(decoded);
-                        prev = decoded;
-                    }
-                    Self::REP3P2 => {
-                        let ext_bits =
-                            3 + reader.read(BitSize::Bit2).ok_or(DecodeError::InvalidData)?;
-                        for _ in 0..ext_bits {
-                            output.push(prev);
-                        }
-                    }
-                    Self::REP3Z3 => {
-                        let ext_bits =
-                            3 + reader.read(BitSize::Bit3).ok_or(DecodeError::InvalidData)?;
-                        for _ in 0..ext_bits {
-                            output.push(0);
-                        }
-                    }
-                    Self::REP11Z7 => {
-                        let ext_bits =
-                            11 + reader.read(BitSize::Bit7).ok_or(DecodeError::InvalidData)?;
-                        for _ in 0..ext_bits {
-                            output.push(0);
-                        }
-                    }
-                    _ => return Err(DecodeError::InvalidData),
-                }
-            }
-        }
-
-        Ok(())
-    }
 }
 
 #[derive(Debug)]
@@ -387,12 +316,9 @@ impl CanonicalPrefixDecoder {
         ((size as u32) << 24) | (value)
     }
 
-    #[inline]
-    pub fn new<K>(prefixes: &[(K, u8)]) -> Self
-    where
-        K: Copy + Ord + Into<usize>,
-    {
-        let prefix_table = Self::reorder_prefix_table(prefixes);
+    pub fn with_lengths(lengths: &[u8]) -> Self {
+        let prefix_table =
+            Self::reorder_prefix_table(lengths.iter().enumerate().map(|(i, &v)| (i, v)));
         Self::with_prefix_table(prefix_table)
     }
 
@@ -421,11 +347,13 @@ impl CanonicalPrefixDecoder {
         }
     }
 
-    pub fn reorder_prefix_table<K>(prefixes: &[(K, u8)]) -> Vec<Option<VarBitValue>>
+    pub fn reorder_prefix_table<K>(
+        prefixes: impl Iterator<Item = (K, u8)>,
+    ) -> Vec<Option<VarBitValue>>
     where
         K: Copy + Ord + Into<usize>,
     {
-        let mut prefixes = prefixes.to_vec();
+        let mut prefixes = prefixes.filter(|(_k, v)| *v > 0).collect::<Vec<_>>();
         prefixes.sort_by(|a, b| match a.1.cmp(&b.1) {
             cmp::Ordering::Equal => a.0.cmp(&b.0),
             ord => ord,
@@ -455,6 +383,83 @@ impl CanonicalPrefixDecoder {
             }
         }
         prefix_table
+    }
+
+    pub fn decode_prefix_table_from_bytes(
+        bytes: &[u8],
+        output_size: usize,
+        permutation_flavor: PermutationFlavor,
+    ) -> Result<Vec<u8>, DecodeError> {
+        let mut reader = BitStreamReader::new(bytes);
+        let mut output = Vec::<u8>::new();
+        Self::decode_prefix_tables(&mut reader, &mut output, &[output_size], permutation_flavor)?;
+        Ok(output)
+    }
+
+    pub fn decode_prefix_tables(
+        reader: &mut BitStreamReader,
+        output: &mut Vec<u8>,
+        output_sizes: &[usize],
+        permutation_flavor: PermutationFlavor,
+    ) -> Result<(), DecodeError> {
+        output.reserve(output_sizes.iter().fold(0, |a, v| a + v));
+
+        let num_prefixes = 4 + reader.read_nibble().ok_or(DecodeError::InvalidData)? as usize;
+        let mut lengths = [0; 19];
+        for &index in permutation_flavor
+            .permutation_order()
+            .iter()
+            .take(num_prefixes)
+        {
+            let prefix_bit = reader.read(BitSize::Bit3).ok_or(DecodeError::InvalidData)?;
+            let p = lengths
+                .get_mut(index as usize)
+                .ok_or(DecodeError::InvalidData)?;
+            *p = prefix_bit as u8;
+        }
+
+        let decoder = CanonicalPrefixDecoder::with_lengths(&lengths);
+        let mut limit = 0;
+        for size in output_sizes {
+            limit += size;
+            let mut prev = 8;
+            while output.len() < limit {
+                let decoded = decoder.decode(reader)? as u8;
+                match decoded {
+                    0 => {
+                        output.push(decoded);
+                    }
+                    1..=15 => {
+                        output.push(decoded);
+                        prev = decoded;
+                    }
+                    CanonicalPrefixCoder::REP3P2 => {
+                        let ext_bits =
+                            3 + reader.read(BitSize::Bit2).ok_or(DecodeError::InvalidData)?;
+                        for _ in 0..ext_bits {
+                            output.push(prev);
+                        }
+                    }
+                    CanonicalPrefixCoder::REP3Z3 => {
+                        let ext_bits =
+                            3 + reader.read(BitSize::Bit3).ok_or(DecodeError::InvalidData)?;
+                        for _ in 0..ext_bits {
+                            output.push(0);
+                        }
+                    }
+                    CanonicalPrefixCoder::REP11Z7 => {
+                        let ext_bits =
+                            11 + reader.read(BitSize::Bit7).ok_or(DecodeError::InvalidData)?;
+                        for _ in 0..ext_bits {
+                            output.push(0);
+                        }
+                    }
+                    _ => return Err(DecodeError::InvalidData),
+                }
+            }
+        }
+
+        Ok(())
     }
 
     pub fn decode(&self, reader: &mut BitStreamReader) -> Result<usize, DecodeError> {

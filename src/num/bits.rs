@@ -374,9 +374,7 @@ impl BitStreamReader<'_> {
 
     pub fn read(&mut self, bits: BitSize) -> Option<u32> {
         let bits = bits.as_u8();
-        if (self.bit_position & 7) == 0 {
-            self.next_byte_bounds()?;
-        }
+        self.refill()?;
         let mask = (1u32 << bits) - 1;
         let mut acc32 = (self.acc >> self.bit_position) as u32 & mask;
         if self.bit_position + bits <= 8 {
@@ -419,9 +417,43 @@ impl BitStreamReader<'_> {
     }
 
     #[inline]
-    pub fn next_byte_bounds(&mut self) -> Option<()> {
-        self.acc = *self.iter.next()?;
+    pub fn skip_to_next_byte_boundary(&mut self) {
         self.bit_position = 0;
+    }
+
+    /// Skip to the next byte boundary and read the next byte
+    #[inline]
+    pub fn read_next_byte(&mut self) -> Option<u8> {
+        self.skip_to_next_byte_boundary();
+        self.iter.next().map(|&v| v)
+    }
+
+    #[inline]
+    pub fn read_next_bytes<const N: usize>(&mut self) -> Option<[u8; N]> {
+        let mut result = [0; N];
+        for p in result.iter_mut() {
+            *p = self.read_next_byte()?;
+        }
+        Some(result)
+    }
+
+    #[inline]
+    pub fn read_next_bytes_slice(&mut self, size: usize) -> Option<&[u8]> {
+        self.skip_to_next_byte_boundary();
+        if size == 0 {
+            return Some(&[]);
+        }
+        let slice = self.iter.as_slice();
+        self.iter.nth(size - 1)?;
+        slice.get(..size)
+    }
+
+    #[inline]
+    pub fn refill(&mut self) -> Option<()> {
+        if (self.bit_position & 7) == 0 {
+            self.acc = *self.iter.next()?;
+            self.bit_position = 0;
+        }
         Some(())
     }
 }

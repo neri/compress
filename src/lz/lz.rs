@@ -1,4 +1,6 @@
 //! Lempel-Ziv compression utilities
+//!
+//! See also: <https://en.wikipedia.org/wiki/LZ77_and_LZ78>
 
 pub mod cache;
 pub mod lzss;

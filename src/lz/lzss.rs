@@ -19,15 +19,15 @@ pub struct Configuration {
 
 impl Configuration {
     /// Maximum window size in deflate (32K, 258)
-    pub const DEFLATE: Self = Self::new(32768, 258, Self::CACHE_PURGE_LIMIT);
+    pub const DEFLATE: Self = Self::new(32768, 258, 0);
 
     /// Fast and Tiny Dictionary size
-    pub const FAST: Self = Self::new(16 * 1024, LZSS::MAX_LEN, Self::CACHE_PURGE_LIMIT);
+    pub const FAST: Self = Self::new(16 * 1024, LZSS::MAX_LEN, 0);
 
     /// Default Dictionary size
-    pub const DEFAULT: Self = Self::new(LZSS::MAX_DISTANCE, LZSS::MAX_LEN, Self::CACHE_PURGE_LIMIT);
+    pub const DEFAULT: Self = Self::new(LZSS::MAX_DISTANCE, LZSS::MAX_LEN, 0);
 
-    pub const MAX: Self = Self::new(LZSS::MAX_DISTANCE, LZSS::MAX_LEN, Self::CACHE_PURGE_LIMIT);
+    pub const MAX: Self = Self::new(LZSS::MAX_DISTANCE, LZSS::MAX_LEN, 0);
 
     // 16M = 128MB
     pub const CACHE_PURGE_LIMIT: usize = 16 * 1024 * 1024;
@@ -45,7 +45,11 @@ impl Configuration {
             } else {
                 max_len
             },
-            cache_purge_limit,
+            cache_purge_limit: if cache_purge_limit > 0 {
+                cache_purge_limit
+            } else {
+                Self::CACHE_PURGE_LIMIT
+            },
         }
     }
 
@@ -75,7 +79,7 @@ impl Default for Configuration {
 #[derive(Debug, Clone, Copy)]
 pub enum LZSS {
     Literal(u8),
-    Match(u32, u16),
+    Match(Matches),
 }
 
 pub struct LzssBuffer {
@@ -180,7 +184,7 @@ impl LZSS {
                             flush_lit(lit_buf, &mut buf, &mut f)?;
                         }
                         lit_buf = None;
-                        f(matches.into())?;
+                        f(LZSS::Match(matches))?;
                         if needs_buffer {
                             buf.push(LZSSIR::with_match(matches));
                         }
@@ -227,7 +231,7 @@ impl LZSS {
                             flush_lit(lit_buf, &mut buf, &mut f)?;
                         }
                         lit_buf = None;
-                        f(matches.into())?;
+                        f(LZSS::Match(matches))?;
                         if needs_buffer {
                             buf.push(LZSSIR::with_match(matches));
                         }
@@ -256,13 +260,6 @@ impl LZSS {
         }
 
         Ok(LzssBuffer { inner: buf })
-    }
-}
-
-impl From<Matches> for LZSS {
-    #[inline]
-    fn from(matches: Matches) -> Self {
-        LZSS::Match(matches.distance as u32, matches.len as u16)
     }
 }
 
@@ -347,9 +344,9 @@ impl LZSSIR {
                 f(LZSS::Literal(byte))?;
             }
         } else {
-            let len = (self.0 >> 16) as u16 + LZSS::MIN_LEN as u16;
-            let offset = (self.0 >> 32) as u32;
-            f(LZSS::Match(offset, len))?;
+            let len = (self.0 >> 16) as usize + LZSS::MIN_LEN as usize;
+            let offset = (self.0 >> 32) as usize;
+            f(LZSS::Match(Matches::new(len, offset)))?;
         }
         Ok(())
     }
