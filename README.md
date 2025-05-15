@@ -1,5 +1,14 @@
 # My compression library (temp)
 
+## Features
+
+* Pure Rust Implementation
+* Support for `no_std`
+
+### MSRV
+
+* The latest version is recommended whenever possible.
+
 ## References
 
 ### Lempel-Ziv

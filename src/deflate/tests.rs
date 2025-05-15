@@ -4,7 +4,7 @@ macro_rules! test_var_uint32 {
     ($test_type:ident) => {
         use super::$test_type;
         use crate::num::bits::{BitStreamReader, BitStreamWriter};
-        let limit = $test_type::MAX_VALUE;
+        let limit = $test_type::MAX;
         $test_type::new(limit - 1).unwrap();
         $test_type::new(limit).unwrap();
         if limit < u32::MAX {
@@ -33,6 +33,7 @@ macro_rules! test_var_uint32 {
                 0x55555555,
                 0xaaaaaaaa,
                 u32::MAX,
+                $test_type::MAX,
             ] {
                 let mask = 1u32.wrapping_shl(scale).wrapping_sub(1);
                 let value = source & mask;

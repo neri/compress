@@ -43,6 +43,10 @@ impl Deflate {
         }
 
         let mut output = Vec::new();
+        if limit_len < usize::MAX {
+            output.reserve(limit_len);
+        }
+
         while output.len() < limit_len {
             let bfinal = reader.read_bool().ok_or(DecodeError::InvalidData)?;
             let btype = reader.read(BitSize::Bit2).ok_or(DecodeError::InvalidData)?;
@@ -77,6 +81,7 @@ impl Deflate {
                         };
                     }
                     let lengths_dist = [5; 32];
+
                     Self::_decode_block(
                         &mut reader,
                         &mut output,
@@ -99,6 +104,7 @@ impl Deflate {
                         PermutationFlavor::Deflate,
                     )?;
                     let (lengths_lit, lengths_dist) = prefix_table.split_at(hlit);
+
                     Self::_decode_block(
                         &mut reader,
                         &mut output,
@@ -145,22 +151,37 @@ impl Deflate {
                 break;
             } else {
                 // length/distance pair
-                let len = 3 + LenType::decode((lit - 257) as u8, reader)
-                    .ok_or(DecodeError::InvalidData)?
-                    .value() as usize;
-                let dist = 1 + OffsetType::decode(decoder_dist.decode(reader)? as u8, reader)
-                    .ok_or(DecodeError::InvalidData)?
-                    .value() as usize;
+                let len = 3 + LenType::decode_value((lit - 257) as u8, reader)
+                    .ok_or(DecodeError::InvalidData)? as usize;
+                let offset =
+                    1 + OffsetType::decode_value(decoder_dist.decode(reader)? as u8, reader)
+                        .ok_or(DecodeError::InvalidData)? as usize;
 
-                assert!(output.len() >= dist);
-                let len = len.min(limit_len - output.len());
-                if dist > output.len() {
+                let output_len = output.len();
+                if offset > output_len {
                     return Err(DecodeError::InvalidData);
                 }
-                let base = output.len() - dist;
-                for i in 0..len {
+                let copy_len = len.min(limit_len - output_len);
+
+                let base = output_len - offset;
+                for i in 0..copy_len {
                     output.push(output[base + i]);
                 }
+
+                // let new_len = output_len + copy_len;
+                // if new_len > output.capacity() {
+                //     output.reserve(copy_len);
+                // }
+                // unsafe {
+                //     let mut dst = output.as_mut_ptr().add(output_len);
+                //     let mut src = dst.sub(offset) as *const u8;
+                //     for _ in 0..copy_len {
+                //         dst.write(src.read());
+                //         dst = dst.add(1);
+                //         src = src.add(1);
+                //     }
+                //     output.set_len(new_len);
+                // }
             }
         }
         Ok(())
@@ -177,7 +198,7 @@ macro_rules! var_uint32 {
         }
 
         impl $class_name {
-            pub const MAX_VALUE: u32 = $max_value;
+            pub const MAX: u32 = $max_value;
 
             #[inline]
             pub fn new(value: u32) -> Option<Self> {
@@ -190,15 +211,9 @@ macro_rules! var_uint32 {
                     + self.trailing.map(|v| v.value()).unwrap_or_default()
             }
 
-            #[inline]
-            pub const fn symbol_size() -> u8 {
-                $base_table.len().next_power_of_two().trailing_zeros() as u8
-            }
-
             pub fn decode(leading: u8, reader: &mut BitStreamReader) -> Option<Self> {
                 let (ext_bit, _min_value) = *($base_table.get(leading as usize)?);
-                if ext_bit > 0 {
-                    let ext_bit = BitSize::new(ext_bit).unwrap();
+                if let Some(ext_bit) = ext_bit {
                     let trailing = reader.read(ext_bit).map(|v| VarBitValue::new(ext_bit, v))?;
                     Some(Self {
                         leading,
@@ -212,17 +227,14 @@ macro_rules! var_uint32 {
                 }
             }
 
-            pub fn push_to(&self, cmd_buf: &mut Vec<u8>, ext_buf: &mut Vec<VarBitValue>) {
-                cmd_buf.push(self.leading);
-                if let Some(trailing) = self.trailing {
-                    ext_buf.push(trailing);
-                }
-            }
-
-            pub fn write_to(&self, writer: &mut Vec<VarBitValue>) {
-                writer.push(VarBitValue::new(BitSize::Bit6, self.leading as u32));
-                if let Some(trailing) = self.trailing {
-                    writer.push(trailing);
+            #[inline]
+            pub fn decode_value(leading: u8, reader: &mut BitStreamReader) -> Option<u32> {
+                let (ext_bit, min_value) = *($base_table.get(leading as usize)?);
+                if let Some(ext_bit) = ext_bit {
+                    let trailing = reader.read(ext_bit).map(|v| VarBitValue::new(ext_bit, v))?;
+                    Some(min_value + trailing.value())
+                } else {
+                    Some(min_value)
                 }
             }
 
@@ -231,118 +243,105 @@ macro_rules! var_uint32 {
                 for (index, item) in $base_table.iter().enumerate().skip(1) {
                     if value < item.1 {
                         let (size, min_value) = prev_item.1;
-                        let mask = (1u32 << size) - 1;
+                        let mask = (1u32 << size.map(|v| v as u32).unwrap_or_default()) - 1;
                         let value = mask & value.checked_sub(min_value)?;
-                        let trailing = BitSize::new(size).map(|size| VarBitValue::new(size, value));
+                        let trailing = size.map(|size| VarBitValue::new(size, value));
                         return Some((prev_item.0, trailing));
                     }
                     prev_item = (index as u8, *item);
                 }
                 let (size, min_value) = prev_item.1;
-                let mask = (1u32 << size) - 1;
+                let mask = (1u32 << size.map(|v| v as u32).unwrap_or_default()) - 1;
                 let value = value.checked_sub(min_value)?;
-                let trailing = BitSize::new(size).map(|size| VarBitValue::new(size, value));
+                let trailing = size.map(|size| VarBitValue::new(size, value));
                 ((value & mask) == value).then(|| (prev_item.0, trailing))
             }
-        }
 
-        impl VarInt for $class_name {
-            fn from_raw(leading: u8, trailing: Option<VarBitValue>) -> Self {
+            pub fn from_raw(leading: u8, trailing: Option<VarBitValue>) -> Self {
                 Self { leading, trailing }
             }
 
-            fn leading(&self) -> u8 {
+            pub fn leading(&self) -> u8 {
                 self.leading
             }
 
-            fn trailing(&self) -> Option<VarBitValue> {
+            pub fn trailing(&self) -> Option<VarBitValue> {
                 self.trailing
             }
 
-            fn trailing_bits_for(leading: u8) -> Option<u8> {
+            pub fn trailing_bits_for(leading: u8) -> Option<BitSize> {
                 let (size, _) = $base_table.get(leading as usize)?;
-                Some(*size)
+                *size
             }
         }
     };
 }
 
-pub trait VarInt {
-    fn from_raw(leading: u8, trailing: Option<VarBitValue>) -> Self;
-
-    fn leading(&self) -> u8;
-
-    fn trailing(&self) -> Option<VarBitValue>;
-
-    fn trailing_bits_for(leading: u8) -> Option<u8>;
-}
-
 var_uint32!(OffsetType, VARIABLE_OFFSET_BASE_TABLE, 32767);
 
-const VARIABLE_OFFSET_BASE_TABLE: [(u8, u32); 30] = [
-    (0, 0),
-    (0, 1),
-    (0, 2),
-    (0, 3),
-    (1, 4),
-    (1, 6),
-    (2, 8),
-    (2, 12),
-    (3, 16),
-    (3, 24),
-    (4, 32),
-    (4, 48),
-    (5, 64),
-    (5, 96),
-    (6, 128),
-    (6, 192),
-    (7, 256),
-    (7, 384),
-    (8, 512),
-    (8, 768),
-    (9, 1024),
-    (9, 1536),
-    (10, 2048),
-    (10, 3072),
-    (11, 4096),
-    (11, 6144),
-    (12, 8192),
-    (12, 12288),
-    (13, 16384),
-    (13, 24576),
+const VARIABLE_OFFSET_BASE_TABLE: [(Option<BitSize>, u32); 30] = [
+    (None, 0),
+    (None, 1),
+    (None, 2),
+    (None, 3),
+    (Some(BitSize::Bit1), 4),
+    (Some(BitSize::Bit1), 6),
+    (Some(BitSize::Bit2), 8),
+    (Some(BitSize::Bit2), 12),
+    (Some(BitSize::Bit3), 16),
+    (Some(BitSize::Bit3), 24),
+    (Some(BitSize::Bit4), 32),
+    (Some(BitSize::Bit4), 48),
+    (Some(BitSize::Bit5), 64),
+    (Some(BitSize::Bit5), 96),
+    (Some(BitSize::Bit6), 128),
+    (Some(BitSize::Bit6), 192),
+    (Some(BitSize::Bit7), 256),
+    (Some(BitSize::Bit7), 384),
+    (Some(BitSize::Bit8), 512),
+    (Some(BitSize::Bit8), 768),
+    (Some(BitSize::Bit9), 1024),
+    (Some(BitSize::Bit9), 1536),
+    (Some(BitSize::Bit10), 2048),
+    (Some(BitSize::Bit10), 3072),
+    (Some(BitSize::Bit11), 4096),
+    (Some(BitSize::Bit11), 6144),
+    (Some(BitSize::Bit12), 8192),
+    (Some(BitSize::Bit12), 12288),
+    (Some(BitSize::Bit13), 16384),
+    (Some(BitSize::Bit13), 24576),
 ];
 
 var_uint32!(LenType, VARIABLE_LENGTH_BASE_TABLE, 255);
 
-#[allow(dead_code)]
-const VARIABLE_LENGTH_BASE_TABLE: [(u8, u32); 29] = [
-    (0, 0),
-    (0, 1),
-    (0, 2),
-    (0, 3),
-    (0, 4),
-    (0, 5),
-    (0, 6),
-    (0, 7),
-    (1, 8),
-    (1, 10),
-    (1, 12),
-    (1, 14),
-    (2, 16),
-    (2, 20),
-    (2, 24),
-    (2, 28),
-    (3, 32),
-    (3, 40),
-    (3, 48),
-    (3, 56),
-    (4, 64),
-    (4, 80),
-    (4, 96),
-    (4, 112),
-    (5, 128),
-    (5, 160),
-    (5, 192),
-    (5, 224),
-    (0, 255),
+const VARIABLE_LENGTH_BASE_TABLE: [(Option<BitSize>, u32); 29] = [
+    (None, 0),
+    (None, 1),
+    (None, 2),
+    (None, 3),
+    (None, 4),
+    (None, 5),
+    (None, 6),
+    (None, 7),
+    (Some(BitSize::Bit1), 8),
+    (Some(BitSize::Bit1), 10),
+    (Some(BitSize::Bit1), 12),
+    (Some(BitSize::Bit1), 14),
+    (Some(BitSize::Bit2), 16),
+    (Some(BitSize::Bit2), 20),
+    (Some(BitSize::Bit2), 24),
+    (Some(BitSize::Bit2), 28),
+    (Some(BitSize::Bit3), 32),
+    (Some(BitSize::Bit3), 40),
+    (Some(BitSize::Bit3), 48),
+    (Some(BitSize::Bit3), 56),
+    (Some(BitSize::Bit4), 64),
+    (Some(BitSize::Bit4), 80),
+    (Some(BitSize::Bit4), 96),
+    (Some(BitSize::Bit4), 112),
+    (Some(BitSize::Bit5), 128),
+    (Some(BitSize::Bit5), 160),
+    (Some(BitSize::Bit5), 192),
+    (Some(BitSize::Bit5), 224),
+    (None, 255),
 ];

@@ -305,15 +305,16 @@ pub struct MetaPrefixTable {
 }
 
 pub struct CanonicalPrefixDecoder {
-    prefix_map: BTreeMap<u32, usize>,
+    prefix_map: Vec<i32>,
     max_size: u8,
     min_size: u8,
+    max_value: u32,
 }
 
 impl CanonicalPrefixDecoder {
     #[inline]
-    fn _key_value(size: u8, value: u32) -> u32 {
-        ((size as u32) << 24) | (value)
+    fn _key_value(size: BitSize, value: u32) -> usize {
+        (1 << size as u32) | (value as usize)
     }
 
     pub fn with_lengths(lengths: &[u8]) -> Self {
@@ -333,18 +334,34 @@ impl CanonicalPrefixDecoder {
             .filter_map(|v| v.as_ref())
             .fold(u8::MAX, |a, v| a.min(v.size().as_u8()));
 
-        let mut prefix_map = BTreeMap::new();
+        let mut prefix_map = Vec::new();
+        prefix_map.resize(2 << max_size, -1);
         for (index, item) in prefix_table.iter().enumerate() {
             if let Some(item) = item {
-                prefix_map.insert(Self::_key_value(item.size().as_u8(), item.value()), index);
+                let p = prefix_map
+                    .get_mut(Self::_key_value(item.size(), item.value()))
+                    .unwrap();
+                *p = index as i32;
             }
         }
+        let max_value = 1u32 << max_size as u32;
 
         Self {
             prefix_map,
             max_size,
             min_size,
+            max_value,
         }
+    }
+
+    #[inline]
+    pub const fn max_size(&self) -> u8 {
+        self.max_size
+    }
+
+    #[inline]
+    pub const fn min_size(&self) -> u8 {
+        self.min_size
     }
 
     pub fn reorder_prefix_table<K>(
@@ -463,34 +480,22 @@ impl CanonicalPrefixDecoder {
     }
 
     pub fn decode(&self, reader: &mut BitStreamReader) -> Result<usize, DecodeError> {
-        let mut read_bits = self.min_size;
-        let mut value = 0;
+        let max_value = self.max_value;
+        let mut value = 1;
         for _ in 0..self.min_size {
-            let read = reader.read_bool().ok_or(DecodeError::InvalidData)?;
-            value = (value << 1) | read as u32;
+            let data = reader.read_bit().ok_or(DecodeError::InvalidData)? as u32;
+            value = (value << 1) | data;
         }
         loop {
-            if let Some(decoded) = self.prefix_map.get(&Self::_key_value(read_bits, value)) {
-                return Ok(*decoded);
-            } else {
-                if read_bits >= self.max_size {
-                    // for item in self.prefix_map.iter() {
-                    //     let size = item.0 >> 24;
-                    //     let value = item.0 & 0xFFFF;
-                    //     let bits = AnyBitValue::new(BitSize::new(size as u8).unwrap(), value);
-                    //     println!("DECODED {:02x} {:2} {:04x} {}", item.1, size, value, bits);
-                    // }
-                    // panic!(
-                    //     "UNKNOWN CHC VALUE {} {:04x} {}",
-                    //     read_bits,
-                    //     value,
-                    //     AnyBitValue::new(BitSize::new(read_bits).unwrap(), value)
-                    // );
+            let decoded = *self.prefix_map.get(value as usize).unwrap();
+            if decoded < 0 {
+                if value >= max_value {
                     return Err(DecodeError::InvalidData);
                 }
-                let read = reader.read_bool().ok_or(DecodeError::InvalidData)?;
-                value = (value << 1) | read as u32;
-                read_bits += 1;
+                let data = reader.read_bit().ok_or(DecodeError::InvalidData)? as u32;
+                value = (value << 1) | data;
+            } else {
+                return Ok(decoded as usize);
             }
         }
     }
