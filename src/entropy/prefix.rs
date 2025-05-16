@@ -305,70 +305,85 @@ pub struct MetaPrefixTable {
 }
 
 pub struct CanonicalPrefixDecoder {
-    prefix_map: Vec<i32>,
-    max_size: u8,
-    min_size: u8,
-    max_value: u32,
+    table: Vec<u32>,
 }
 
 impl CanonicalPrefixDecoder {
     #[inline]
-    fn _key_value(size: BitSize, value: u32) -> usize {
-        (1 << size as u32) | (value as usize)
+    pub fn new() -> Self {
+        Self {
+            table: [0].to_vec(),
+        }
     }
 
     pub fn with_lengths(lengths: &[u8]) -> Self {
-        let prefix_table =
-            Self::reorder_prefix_table(lengths.iter().enumerate().map(|(i, &v)| (i, v)));
-        Self::with_prefix_table(prefix_table)
+        let prefix_table = CanonicalPrefixDecoder::reorder_prefix_table(
+            lengths.iter().enumerate().map(|(i, &v)| (i, v)),
+        );
+
+        let mut decoder = Self::new();
+        for (value, path) in prefix_table.into_iter() {
+            decoder.insert_node(path, value as u32);
+        }
+
+        decoder
     }
 
-    pub fn with_prefix_table(prefix_table: Vec<Option<VarBitValue>>) -> Self {
-        let max_size = prefix_table
-            .iter()
-            .filter_map(|v| v.as_ref())
-            .fold(0, |a, v| a.max(v.size().as_u8()));
+    fn insert_node(&mut self, path: VarBitValue, value: u32) {
+        let mut index = 0;
+        let mut rpath = path.reversed().value();
+        for _ in 0..path.size().as_usize() - 1 {
+            let bit = rpath & 1;
+            let mut next = self.table[index];
+            if bit != 0 {
+                next >>= 16;
+            }
+            if next == 0 {
+                let new_index = self.table.len();
+                if bit != 0 {
+                    self.table[index] |= (new_index as u32) << 16;
+                } else {
+                    self.table[index] |= new_index as u32;
+                }
+                self.table.push(0);
+                index = new_index;
+            } else {
+                index = next as usize;
+            }
+            rpath >>= 1;
+        }
+        let bit = rpath & 1;
+        if bit != 0 {
+            self.table[index] |= (0x8000 | value) << 16;
+        } else {
+            self.table[index] |= 0x8000 | value;
+        }
+    }
 
-        let min_size = prefix_table
-            .iter()
-            .filter_map(|v| v.as_ref())
-            .fold(u8::MAX, |a, v| a.min(v.size().as_u8()));
+    #[inline]
+    pub fn root_node<'a>(&'a self) -> DecodeTreeNode<'a> {
+        DecodeTreeNode::new(&self.table, 0)
+    }
 
-        let mut prefix_map = Vec::new();
-        prefix_map.resize(2 << max_size, -1);
-        for (index, item) in prefix_table.iter().enumerate() {
-            if let Some(item) = item {
-                let p = prefix_map
-                    .get_mut(Self::_key_value(item.size(), item.value()))
-                    .unwrap();
-                *p = index as i32;
+    // #[inline(never)]
+    pub fn decode(&self, reader: &mut BitStreamReader) -> Result<u32, DecodeError> {
+        let mut node = self.root_node();
+        loop {
+            let bit = reader.read_bool().ok_or(DecodeError::InvalidData)?;
+            match node.next(bit) {
+                ChildNode::Leaf(value) => {
+                    return Ok(value);
+                }
+                ChildNode::Node(next) => {
+                    node = next;
+                }
             }
         }
-        let max_value = 1u32 << max_size as u32;
-
-        Self {
-            prefix_map,
-            max_size,
-            min_size,
-            max_value,
-        }
     }
 
-    #[inline]
-    pub const fn max_size(&self) -> u8 {
-        self.max_size
-    }
-
-    #[inline]
-    pub const fn min_size(&self) -> u8 {
-        self.min_size
-    }
-
-    pub fn reorder_prefix_table<K>(
-        prefixes: impl Iterator<Item = (K, u8)>,
-    ) -> Vec<Option<VarBitValue>>
+    pub fn reorder_prefix_table<K>(prefixes: impl Iterator<Item = (K, u8)>) -> Vec<(K, VarBitValue)>
     where
-        K: Copy + Ord + Into<usize>,
+        K: Copy + Ord,
     {
         let mut prefixes = prefixes.filter(|(_k, v)| *v > 0).collect::<Vec<_>>();
         prefixes.sort_by(|a, b| match a.1.cmp(&b.1) {
@@ -376,28 +391,19 @@ impl CanonicalPrefixDecoder {
             ord => ord,
         });
 
+        let mut prefix_table = Vec::new();
         let mut acc = 0;
         let mut last_bits = 0;
-        let mut prefix_table = Vec::new();
-
-        prefix_table.resize(
-            1 + prefixes.iter().fold(0usize, |a, v| a.max(v.0.into())),
-            None,
-        );
-
         for item in prefixes.iter() {
             let bits = item.1;
-            if bits > 0 {
-                let mut adj = bits;
-                while last_bits < adj {
-                    acc <<= 1;
-                    adj -= 1;
-                }
-                last_bits = bits;
-                prefix_table[(item.0).into()] =
-                    Some(VarBitValue::new(BitSize::new(bits).unwrap(), acc));
-                acc += 1;
+            let mut adj = bits;
+            while last_bits < adj {
+                acc <<= 1;
+                adj -= 1;
             }
+            last_bits = bits;
+            prefix_table.push((item.0, VarBitValue::new(BitSize::new(bits).unwrap(), acc)));
+            acc += 1;
         }
         prefix_table
     }
@@ -428,7 +434,9 @@ impl CanonicalPrefixDecoder {
             .iter()
             .take(num_prefixes)
         {
-            let prefix_bit = reader.read(BitSize::Bit3).ok_or(DecodeError::InvalidData)?;
+            let prefix_bit = reader
+                .read_bits(BitSize::Bit3)
+                .ok_or(DecodeError::InvalidData)?;
             let p = lengths
                 .get_mut(index as usize)
                 .ok_or(DecodeError::InvalidData)?;
@@ -451,22 +459,26 @@ impl CanonicalPrefixDecoder {
                         prev = decoded;
                     }
                     CanonicalPrefixCoder::REP3P2 => {
-                        let ext_bits =
-                            3 + reader.read(BitSize::Bit2).ok_or(DecodeError::InvalidData)?;
+                        let ext_bits = 3 + reader
+                            .read_bits(BitSize::Bit2)
+                            .ok_or(DecodeError::InvalidData)?;
                         for _ in 0..ext_bits {
                             output.push(prev);
                         }
                     }
                     CanonicalPrefixCoder::REP3Z3 => {
-                        let ext_bits =
-                            3 + reader.read(BitSize::Bit3).ok_or(DecodeError::InvalidData)?;
+                        let ext_bits = 3 + reader
+                            .read_bits(BitSize::Bit3)
+                            .ok_or(DecodeError::InvalidData)?;
                         for _ in 0..ext_bits {
                             output.push(0);
                         }
                     }
                     CanonicalPrefixCoder::REP11Z7 => {
-                        let ext_bits =
-                            11 + reader.read(BitSize::Bit7).ok_or(DecodeError::InvalidData)?;
+                        let ext_bits = 11
+                            + reader
+                                .read_bits(BitSize::Bit7)
+                                .ok_or(DecodeError::InvalidData)?;
                         for _ in 0..ext_bits {
                             output.push(0);
                         }
@@ -477,27 +489,6 @@ impl CanonicalPrefixDecoder {
         }
 
         Ok(())
-    }
-
-    pub fn decode(&self, reader: &mut BitStreamReader) -> Result<usize, DecodeError> {
-        let max_value = self.max_value;
-        let mut value = 1;
-        for _ in 0..self.min_size {
-            let data = reader.read_bit().ok_or(DecodeError::InvalidData)? as u32;
-            value = (value << 1) | data;
-        }
-        loop {
-            let decoded = *self.prefix_map.get(value as usize).unwrap();
-            if decoded < 0 {
-                if value >= max_value {
-                    return Err(DecodeError::InvalidData);
-                }
-                let data = reader.read_bit().ok_or(DecodeError::InvalidData)? as u32;
-                value = (value << 1) | data;
-            } else {
-                return Ok(decoded as usize);
-            }
-        }
     }
 }
 
@@ -745,4 +736,36 @@ impl SimplePrefixCoder {
         }
         vec
     }
+}
+
+#[derive(Debug)]
+pub struct DecodeTreeNode<'a> {
+    tree: &'a [u32],
+    index: u16,
+}
+
+impl<'a> DecodeTreeNode<'a> {
+    #[inline]
+    fn new(tree: &'a [u32], index: u16) -> Self {
+        Self { tree, index }
+    }
+
+    // #[inline(never)]
+    pub fn next(&self, bit: bool) -> ChildNode<'a> {
+        let mut next = self.tree[self.index as usize];
+        if bit {
+            next >>= 16;
+        }
+        if next & 0x8000 == 0 {
+            ChildNode::Node(DecodeTreeNode::new(self.tree, next as u16))
+        } else {
+            ChildNode::Leaf(next & 0x7fff)
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum ChildNode<'a> {
+    Leaf(u32),
+    Node(DecodeTreeNode<'a>),
 }

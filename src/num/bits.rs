@@ -379,16 +379,16 @@ impl BitStreamReader<'_> {
 
     #[inline]
     pub fn read_nibble(&mut self) -> Option<Nibble> {
-        self.read(BitSize::NIBBLE)
+        self.read_bits(BitSize::NIBBLE)
             .and_then(|v| Nibble::new(v as u8))
     }
 
     #[inline]
     pub fn read_byte(&mut self) -> Option<u8> {
-        self.read(BitSize::Bit8).map(|v| v as u8)
+        self.read_bits(BitSize::Bit8).map(|v| v as u8)
     }
 
-    pub fn read(&mut self, bits: BitSize) -> Option<u32> {
+    pub fn read_bits(&mut self, bits: BitSize) -> Option<u32> {
         let max = 1 << bits.as_u8() as u32;
         let mut value = 0;
         let mut position = 1;
@@ -397,7 +397,7 @@ impl BitStreamReader<'_> {
             if read != 0 {
                 value |= position;
             }
-            position <<= 1;
+            position += position;
         }
         Some(value)
     }
@@ -414,6 +414,7 @@ impl BitStreamReader<'_> {
         self.iter.next().map(|&v| v)
     }
 
+    /// Skip to the next byte boundary and read the specified number of bytes
     #[inline]
     pub fn read_next_bytes<const N: usize>(&mut self) -> Option<[u8; N]> {
         let mut result = [0; N];
@@ -423,6 +424,7 @@ impl BitStreamReader<'_> {
         Some(result)
     }
 
+    /// Skips to the next byte boundary and returns a slice with the specified number of bytes
     #[inline]
     pub fn read_next_bytes_slice(&mut self, size: usize) -> Option<&[u8]> {
         self.skip_to_next_byte_boundary();
@@ -485,11 +487,11 @@ mod tests {
                     println!("DATA: {:02x?}", &stream);
 
                     let mut reader = BitStreamReader::new(&stream);
-                    assert_eq!(reader.read(padding_size).unwrap(), 0);
-                    assert_eq!(reader.read(value_size).unwrap(), pattern & mask);
-                    assert_eq!(reader.read(padding_size).unwrap(), padding_mask);
-                    assert_eq!(reader.read(value_size).unwrap(), pattern_n & mask);
-                    assert_eq!(reader.read(padding_size).unwrap(), 0);
+                    assert_eq!(reader.read_bits(padding_size).unwrap(), 0);
+                    assert_eq!(reader.read_bits(value_size).unwrap(), pattern & mask);
+                    assert_eq!(reader.read_bits(padding_size).unwrap(), padding_mask);
+                    assert_eq!(reader.read_bits(value_size).unwrap(), pattern_n & mask);
+                    assert_eq!(reader.read_bits(padding_size).unwrap(), 0);
                 }
             }
         }
