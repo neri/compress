@@ -165,6 +165,11 @@ impl VarBitValue {
     }
 
     #[inline]
+    pub fn canonical_value(&self) -> u32 {
+        self.value() & ((1u32 << self.size().as_usize()) - 1)
+    }
+
+    #[inline]
     pub fn to_vec<T>(iter: T) -> Vec<u8>
     where
         T: Iterator<Item = VarBitValue>,

@@ -107,10 +107,10 @@ impl Deflate {
                         .ok_or(DecodeError::InvalidData)?
                         as usize;
                     let mut prefix_table = Vec::new();
-                    CanonicalPrefixDecoder::decode_prefix_tables(
+                    CanonicalPrefixDecoder::decode_prefix_table(
                         &mut reader,
                         &mut prefix_table,
-                        &[hlit, hdist],
+                        hlit + hdist,
                         PermutationFlavor::Deflate,
                     )?;
                     let (lengths_lit, lengths_dist) = prefix_table.split_at(hlit);
@@ -152,31 +152,45 @@ impl Deflate {
     ) -> Result<(), DecodeError> {
         output.reserve(window_size);
         let decoder_lit = CanonicalPrefixDecoder::with_lengths(lengths_lit)?;
-        let decoder_dist = CanonicalPrefixDecoder::with_lengths(lengths_dist)?;
+        if lengths_dist.len() >= 2 {
+            let decoder_dist = CanonicalPrefixDecoder::with_lengths(lengths_dist)?;
 
-        while output.len() < limit_len {
-            let lit = decoder_lit.decode(reader)?;
-            if lit < 256 {
-                // literal
-                output.push(lit as u8);
-            } else if lit == 256 {
-                // end of block
-                break;
-            } else {
-                // length/distance pair
-                let len = 3 + LenType::decode_value((lit - 257) as u8, reader)
-                    .ok_or(DecodeError::InvalidData)? as usize;
-                let offset =
-                    1 + OffsetType::decode_value(decoder_dist.decode(reader)? as u8, reader)
-                        .ok_or(DecodeError::InvalidData)? as usize;
+            while output.len() < limit_len {
+                let lit = decoder_lit.decode(reader)?;
+                if lit < 256 {
+                    // literal
+                    output.push(lit as u8);
+                } else if lit == 256 {
+                    // end of block
+                    break;
+                } else {
+                    // length/distance pair
+                    let len = 3 + LenType::decode_value((lit - 257) as u8, reader)
+                        .ok_or(DecodeError::InvalidData)?
+                        as usize;
+                    let offset =
+                        1 + OffsetType::decode_value(decoder_dist.decode(reader)? as u8, reader)
+                            .ok_or(DecodeError::InvalidData)? as usize;
 
-                if offset > output.len() {
-                    return Err(DecodeError::InvalidData);
+                    if offset > output.len() {
+                        return Err(DecodeError::InvalidData);
+                    }
+                    let copy_len = len.min(limit_len - output.len());
+                    output.reserve(copy_len);
+                    for _ in 0..copy_len {
+                        output.push(output[output.len() - offset]);
+                    }
                 }
-                let copy_len = len.min(limit_len - output.len());
-                output.reserve(copy_len);
-                for _ in 0..copy_len {
-                    output.push(output[output.len() - offset]);
+            }
+        } else {
+            while output.len() < limit_len {
+                let lit = decoder_lit.decode(reader)?;
+                if lit < 256 {
+                    // literal
+                    output.push(lit as u8);
+                } else if lit == 256 {
+                    // end of block
+                    break;
                 }
             }
         }

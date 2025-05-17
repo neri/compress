@@ -165,7 +165,7 @@ impl CanonicalPrefixCoder {
     fn rle_compress_prefix_table(input: &[u8]) -> Vec<VarBitValue> {
         let mut output = Vec::new();
         let mut cursor = 0;
-        let mut prev = 8;
+        let mut prev = 0; //8;
         while let Some(current) = input.get(cursor) {
             let current = *current;
             cursor += {
@@ -187,6 +187,7 @@ impl CanonicalPrefixCoder {
                     }
                 } else {
                     let len = Self::rle_match_len(0, &input, cursor, 138);
+                    prev = 0;
                     if len >= 11 {
                         output.push(VarBitValue::with_byte(REP11Z7));
                         output.push(VarBitValue::new(BitSize::Bit7, len as u32 - 11));
@@ -283,6 +284,7 @@ impl CanonicalPrefixCoder {
             hclen: Nibble::new(max_index as u8 - 3).unwrap(),
             prefix_table,
             content: compressed_table,
+            intermediate_tables: tables,
         })
     }
 }
@@ -293,6 +295,7 @@ pub struct MetaPrefixTable {
     pub hclen: Nibble,
     pub prefix_table: Vec<VarBitValue>,
     pub content: Vec<VarBitValue>,
+    pub intermediate_tables: Vec<Vec<VarBitValue>>,
 }
 
 pub enum HuffmanTreeNode<K> {
