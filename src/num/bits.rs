@@ -369,6 +369,7 @@ impl BitStreamReader<'_> {
         Some(result)
     }
 
+    #[inline]
     pub fn advance(&mut self, bits: usize) {
         self.acc >>= bits;
         self.left -= bits;
@@ -423,6 +424,7 @@ impl BitStreamReader<'_> {
     #[inline]
     pub fn skip_to_next_byte_boundary(&mut self) {
         self.acc = 0;
+        self.left = 0;
     }
 
     /// Skip to the next byte boundary and read the next byte
