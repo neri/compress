@@ -2,7 +2,6 @@
 use crate::*;
 use core::fmt;
 use core::mem::transmute;
-use core::slice::Iter;
 use num::Nibble;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -34,13 +33,14 @@ pub enum BitSize {
 }
 
 impl BitSize {
-    pub const BIT: Self = Self::Bit1;
-
     pub const NIBBLE: Self = Self::Bit4;
 
     pub const BYTE: Self = Self::Bit8;
 
     pub const OCTET: Self = Self::Bit8;
+
+    /// Currently maximum size
+    pub const MAX: Self = Self::Bit24;
 
     #[inline]
     pub fn as_usize(&self) -> usize {
@@ -88,6 +88,9 @@ impl BitSize {
         }
     }
 
+    /// # Safety
+    ///
+    /// UB on invalid value
     #[inline]
     pub const unsafe fn new_unchecked(value: u8) -> Self {
         unsafe { transmute(value) }
@@ -110,9 +113,9 @@ pub fn count_bits(array: &[u8]) -> usize {
 
 /// Returns nearest power of two
 ///
-/// # Safety
+/// # SAFETY
 ///
-/// UB on `value > usize::MAX/2`
+/// UB on `value > usize::MAX / 2`
 pub const fn nearest_power_of_two(value: usize) -> usize {
     if value == 0 {
         return 0;
@@ -339,7 +342,8 @@ impl BitStreamWriter {
 }
 
 pub struct BitStreamReader<'a> {
-    iter: Iter<'a, u8>,
+    slice: &'a [u8],
+    left: usize,
     acc: u32,
 }
 
@@ -347,28 +351,37 @@ impl<'a> BitStreamReader<'a> {
     #[inline]
     pub fn new(slice: &'a [u8]) -> Self {
         Self {
-            iter: slice.iter(),
-            acc: Self::DEFAULT_ACC,
+            slice,
+            left: 0,
+            acc: 0,
         }
     }
 }
 
 impl BitStreamReader<'_> {
-    const DEFAULT_ACC: u32 = 1;
-
     #[inline]
-    pub fn refill(&mut self) -> Option<()> {
-        if self.acc <= Self::DEFAULT_ACC {
-            self.acc = 0x100 | *self.iter.next()? as u32;
-        }
-        Some(())
+    fn _iter_next(&mut self) -> Option<u8> {
+        let Some((left, right)) = self.slice.split_at_checked(1) else {
+            return None;
+        };
+        self.slice = right;
+        let result = left[0];
+        Some(result)
     }
 
-    #[inline]
+    pub fn advance(&mut self, bits: usize) {
+        self.acc >>= bits;
+        self.left -= bits;
+    }
+
+    // #[inline(never)]
     pub fn read_bit(&mut self) -> Option<bool> {
-        self.refill()?;
+        if self.left == 0 {
+            self.acc = self._iter_next()? as u32;
+            self.left = 8;
+        }
         let result = self.acc & 1 != 0;
-        self.acc >>= 1;
+        self.advance(1);
         Some(result)
     }
 
@@ -388,30 +401,35 @@ impl BitStreamReader<'_> {
         self.read_bits(BitSize::Bit8).map(|v| v as u8)
     }
 
+    // #[inline(never)]
     pub fn read_bits(&mut self, bits: BitSize) -> Option<u32> {
-        let max = 1 << bits.as_u8() as u32;
-        let mut value = 0;
-        let mut position = 1;
-        while position < max {
-            let read = self.read_bit()? as u32;
-            if read != 0 {
-                value |= position;
+        if bits.as_usize() <= self.left {
+            let result = self.acc & ((1 << bits.as_u8()) - 1);
+            self.advance(bits.as_usize());
+            return Some(result);
+        } else if bits.as_usize() as usize + self.left < 32 {
+            while bits.as_usize() > self.left {
+                self.acc |= (self._iter_next()? as u32) << self.left;
+                self.left += 8;
             }
-            position += position;
+            let result = self.acc & ((1 << bits.as_u8()) - 1);
+            self.advance(bits.as_usize());
+            return Some(result);
+        } else {
+            todo!()
         }
-        Some(value)
     }
 
     #[inline]
     pub fn skip_to_next_byte_boundary(&mut self) {
-        self.acc = Self::DEFAULT_ACC;
+        self.acc = 0;
     }
 
     /// Skip to the next byte boundary and read the next byte
     #[inline]
     pub fn read_next_byte(&mut self) -> Option<u8> {
         self.skip_to_next_byte_boundary();
-        self.iter.next().map(|&v| v)
+        self._iter_next()
     }
 
     /// Skip to the next byte boundary and read the specified number of bytes
@@ -431,9 +449,11 @@ impl BitStreamReader<'_> {
         if size == 0 {
             return Some(&[]);
         }
-        let slice = self.iter.as_slice();
-        self.iter.nth(size - 1)?;
-        slice.get(..size)
+        let Some((left, right)) = self.slice.split_at_checked(size) else {
+            return None;
+        };
+        self.slice = right;
+        Some(left)
     }
 }
 

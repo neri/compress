@@ -21,7 +21,7 @@ impl Deflate {
     pub fn inflate(input: &[u8], limit_len: usize) -> Result<Vec<u8>, DecodeError> {
         // In zlib, the first byte is always 08, 78, etc., but a pure deflate stream will never have such a value.
         let leading = *input.get(0).ok_or(DecodeError::InvalidData)?;
-        let skip = if leading & 0x0f == 0x08 {
+        let (skip, window_size) = if leading & 0x0f == 0x08 {
             // zlib header
             let cmf = leading;
             let flg = *input.get(1).ok_or(DecodeError::InvalidData)?;
@@ -32,9 +32,10 @@ impl Deflate {
             if (cmf_flg % 31) != 0 {
                 return Err(DecodeError::InvalidData);
             }
-            Some(BitSize::Bit16)
+            let window_size = 256usize << ((cmf_flg >> 4) & 0x0f);
+            (Some(BitSize::Bit16), window_size)
         } else {
-            None
+            (None, 0x8000)
         };
 
         let mut reader = BitStreamReader::new(input);
@@ -89,6 +90,7 @@ impl Deflate {
                     Self::_decode_block(
                         &mut reader,
                         &mut output,
+                        window_size,
                         limit_len,
                         &lengths_lit,
                         &lengths_dist,
@@ -116,6 +118,7 @@ impl Deflate {
                     Self::_decode_block(
                         &mut reader,
                         &mut output,
+                        window_size,
                         limit_len,
                         lengths_lit,
                         lengths_dist,
@@ -142,12 +145,14 @@ impl Deflate {
     fn _decode_block(
         reader: &mut BitStreamReader,
         output: &mut Vec<u8>,
+        window_size: usize,
         limit_len: usize,
         lengths_lit: &[u8],
         lengths_dist: &[u8],
     ) -> Result<(), DecodeError> {
-        let decoder_lit = CanonicalPrefixDecoder::with_lengths(lengths_lit);
-        let decoder_dist = CanonicalPrefixDecoder::with_lengths(lengths_dist);
+        output.reserve(window_size);
+        let decoder_lit = CanonicalPrefixDecoder::with_lengths(lengths_lit)?;
+        let decoder_dist = CanonicalPrefixDecoder::with_lengths(lengths_dist)?;
 
         while output.len() < limit_len {
             let lit = decoder_lit.decode(reader)?;
@@ -165,19 +170,13 @@ impl Deflate {
                     1 + OffsetType::decode_value(decoder_dist.decode(reader)? as u8, reader)
                         .ok_or(DecodeError::InvalidData)? as usize;
 
-                let output_len = output.len();
-                if offset > output_len {
+                if offset > output.len() {
                     return Err(DecodeError::InvalidData);
                 }
-                let copy_len = len.min(limit_len - output_len);
-                let base = output_len - offset;
-                if offset == 1 {
-                    let byte = output[base];
-                    output.extend(core::iter::repeat(byte).take(copy_len));
-                } else {
-                    for i in 0..copy_len {
-                        output.push(output[base + i]);
-                    }
+                let copy_len = len.min(limit_len - output.len());
+                output.reserve(copy_len);
+                for _ in 0..copy_len {
+                    output.push(output[output.len() - offset]);
                 }
             }
         }
