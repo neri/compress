@@ -95,6 +95,16 @@ impl BitSize {
     pub const unsafe fn new_unchecked(value: u8) -> Self {
         unsafe { transmute(value) }
     }
+
+    #[inline]
+    pub const fn mask(&self) -> u32 {
+        (1 << *self as usize) - 1
+    }
+
+    #[inline]
+    pub const fn power_of_two(&self) -> u32 {
+        1 << *self as usize
+    }
 }
 
 impl core::fmt::Display for BitSize {
@@ -140,6 +150,11 @@ impl VarBitValue {
     }
 
     #[inline]
+    pub fn new_checked(size: BitSize, value: u32) -> Option<Self> {
+        ((value & size.mask()) == value).then(|| Self(value | (size.as_u32() << 24)))
+    }
+
+    #[inline]
     pub fn with_bool(value: bool) -> Self {
         Self::new(BitSize::Bit1, value as u32)
     }
@@ -166,7 +181,7 @@ impl VarBitValue {
 
     #[inline]
     pub fn canonical_value(&self) -> u32 {
-        self.value() & ((1u32 << self.size().as_usize()) - 1)
+        self.value() & self.size().mask()
     }
 
     #[inline]
@@ -418,11 +433,12 @@ impl BitStreamReader<'_> {
                 self.acc |= (self._iter_next()? as u32) << self.left;
                 self.left += 8;
             }
-            let result = self.acc & ((1 << bits.as_u8()) - 1);
+            let result = self.acc & bits.mask();
             self.advance(bits.as_usize());
             return Some(result);
         } else {
-            todo!()
+            // Currently BitSize is limited to a maximum of 24 bits, so it will never exceed 32 bits.
+            unreachable!()
         }
     }
 
@@ -585,6 +601,16 @@ mod tests {
 
             assert_eq!(lhs.reversed().reversed(), lhs);
             assert_eq!(rhs.reversed().reversed(), rhs);
+        }
+    }
+
+    #[test]
+    fn bit_mask() {
+        for i in 1..=24 {
+            let mask = (1u32 << i) - 1;
+            assert_eq!(mask, BitSize::new(i).unwrap().mask());
+            let shifted = 1 << i;
+            assert_eq!(shifted, BitSize::new(i).unwrap().power_of_two());
         }
     }
 }

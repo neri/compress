@@ -2,7 +2,7 @@
 //!
 //! See also: <https://www.ietf.org/rfc/rfc1951.txt>
 
-use crate::entropy::prefix::{CanonicalPrefixDecoder, PermutationFlavor};
+use crate::entropy::prefix::CanonicalPrefixDecoder;
 use crate::num::bits::{BitSize, BitStreamReader, VarBitValue};
 use crate::*;
 
@@ -107,11 +107,10 @@ impl Deflate {
                         .ok_or(DecodeError::InvalidData)?
                         as usize;
                     let mut prefix_table = Vec::new();
-                    CanonicalPrefixDecoder::decode_prefix_table(
+                    CanonicalPrefixDecoder::decode_prefix_table_deflate(
                         &mut reader,
                         &mut prefix_table,
                         hlit + hdist,
-                        PermutationFlavor::Deflate,
                     )?;
                     let (lengths_lit, lengths_dist) = prefix_table.split_at(hlit);
 
