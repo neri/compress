@@ -381,12 +381,9 @@ impl<'a> BitStreamReader<'a> {
 impl BitStreamReader<'_> {
     #[inline]
     fn _iter_next(&mut self) -> Option<u8> {
-        let Some((left, right)) = self.slice.split_at_checked(1) else {
-            return None;
-        };
+        let (left, right) = self.slice.split_first()?;
         self.slice = right;
-        let result = left[0];
-        Some(result)
+        Some(*left)
     }
 
     #[inline]
@@ -396,7 +393,7 @@ impl BitStreamReader<'_> {
     }
 
     // #[inline(never)]
-    pub fn read_bit(&mut self) -> Option<bool> {
+    pub fn read_bool(&mut self) -> Option<bool> {
         if self.left == 0 {
             self.acc = self._iter_next()? as u32;
             self.left = 8;
@@ -404,11 +401,6 @@ impl BitStreamReader<'_> {
         let result = self.acc & 1 != 0;
         self.advance(1);
         Some(result)
-    }
-
-    #[inline]
-    pub fn read_bool(&mut self) -> Option<bool> {
-        self.read_bit()
     }
 
     #[inline]
@@ -472,9 +464,7 @@ impl BitStreamReader<'_> {
         if size == 0 {
             return Some(&[]);
         }
-        let Some((left, right)) = self.slice.split_at_checked(size) else {
-            return None;
-        };
+        let (left, right) = self.slice.split_at_checked(size)?;
         self.slice = right;
         Some(left)
     }

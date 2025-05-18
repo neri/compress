@@ -13,8 +13,8 @@ const LOOKTUP_TABLE_INVAID_VALUE: u16 = u16::MAX;
 
 #[allow(unused)]
 pub struct CanonicalPrefixDecoder {
-    decode_tree: Vec<u32>,
     lookup_table: Vec<u16>,
+    decode_tree: Vec<u32>,
     max_lookup_bits: BitSize,
     max_bits: BitSize,
     min_bits: BitSize,
@@ -62,12 +62,12 @@ impl CanonicalPrefixDecoder {
             .iter()
             .map(|(_k, v)| v.size().as_usize())
             .max()
-            .unwrap_or(0);
+            .ok_or(DecodeError::InvalidData)?;
         let min_bits = prefix_table
             .iter()
             .map(|(_k, v)| v.size().as_usize())
             .min()
-            .unwrap_or(0);
+            .ok_or(DecodeError::InvalidData)?;
         let min_bits = min_bits.min(MAX_LOOKUP_TABLE_BITS);
         let max_lookup_bits = max_bits.min(MAX_LOOKUP_TABLE_BITS);
 
@@ -370,7 +370,6 @@ impl<'a> DecodeTreeNode<'a> {
         Self { tree, index }
     }
 
-    // #[inline(never)]
     pub fn next(&self, bit: bool) -> ChildNode<'a> {
         let mut next = self.tree[self.index as usize];
         if bit {
