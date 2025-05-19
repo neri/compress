@@ -77,7 +77,7 @@ impl CanonicalPrefixDecoder {
         decoder
             .lookup_table
             .resize(1 << peek_bits, LookupTableEntry::EMPTY);
-        let max_peek_value = decoder.lookup_table.len() - 1;
+        let max_peek_value = decoder.lookup_table.len();
         for (sym1, path1) in prefix_table.iter().copied() {
             if path1.size().as_usize() > peek_bits {
                 continue;
@@ -85,7 +85,7 @@ impl CanonicalPrefixDecoder {
             if let Some(item) = LookupTableEntry::new(sym1, path1.size()) {
                 let mut path = path1.reversed().value() as usize;
                 let delta = path1.size().power_of_two() as usize;
-                while path <= max_peek_value {
+                while path < max_peek_value {
                     decoder.lookup_table[path] = item;
                     path += delta;
                 }

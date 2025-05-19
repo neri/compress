@@ -150,8 +150,8 @@ impl Deflate {
         lengths_dist: &[u8],
     ) -> Result<(), DecodeError> {
         output.reserve(window_size);
-        let decoder_lit = CanonicalPrefixDecoder::with_lengths(lengths_lit)?;
         if lengths_dist.len() >= 2 {
+            let decoder_lit = CanonicalPrefixDecoder::with_lengths(lengths_lit)?;
             let decoder_dist = CanonicalPrefixDecoder::with_lengths(lengths_dist)?;
 
             while output.len() < limit_len {
@@ -182,6 +182,7 @@ impl Deflate {
                 }
             }
         } else {
+            let decoder_lit = CanonicalPrefixDecoder::with_lengths(lengths_lit)?;
             while output.len() < limit_len {
                 let lit = decoder_lit.decode(reader)?;
                 if lit < 256 {

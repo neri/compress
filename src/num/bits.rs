@@ -451,7 +451,7 @@ impl BitStreamReader<'_> {
                 self._advance(bits.as_usize());
             }
             return Some(result);
-        } else if bits.as_usize() + self.left < 32 {
+        } else {
             while bits.as_usize() > self.left {
                 self.acc |= (self._iter_next()? as u32) << self.left;
                 self.left += 8;
@@ -461,28 +461,24 @@ impl BitStreamReader<'_> {
                 self._advance(bits.as_usize());
             }
             return Some(result);
-        } else {
-            // Currently BitSize is limited to a maximum of 24 bits, so it will never exceed 32 bits.
-            unreachable!()
         }
     }
 
+    // #[inline(never)]
     pub fn peek_bits(&self, bits: BitSize) -> Option<u32> {
         if bits.as_usize() <= self.left {
             Some(self.acc & bits.mask())
-        } else if bits.as_usize() + self.left < 32 {
+        } else {
             let mut acc = self.acc;
             let mut left = self.left;
-            let mut index = 0;
+            let mut slice = self.slice;
             while bits.as_usize() > left {
-                acc |= (*self.slice.get(index)? as u32) << left;
+                let (data, _slice) = slice.split_first()?;
+                acc |= (*data as u32) << left;
                 left += 8;
-                index += 1;
+                slice = _slice;
             }
             Some(acc & bits.mask())
-        } else {
-            // Currently BitSize is limited to a maximum of 24 bits, so it will never exceed 32 bits.
-            unreachable!()
         }
     }
 
