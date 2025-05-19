@@ -4,18 +4,13 @@ use crate::num::bits::{BitSize, BitStreamReader, VarBitValue};
 use crate::*;
 use core::cmp;
 
-/// Determine the maximum size of the lookup table.
-/// It should be approximately 4 times the size of the number of bits specified here. (e.g. 8bits -> 1KB, 10bits -> 4KB)
-/// If this size is too small, speed will be reduced, but if it is too large, speed improvement will be slight and memory consumption will increase.
-const MAX_LOOKUP_TABLE_BITS: usize = 10;
-
-const LOOKTUP_TABLE_INVAID_VALUE: u16 = u16::MAX;
+const MAX_LOOKUP_TABLE_BITS: usize = 12;
 
 #[allow(unused)]
 pub struct CanonicalPrefixDecoder {
-    lookup_table: Vec<u16>,
+    lookup_table: Vec<LookupTableEntry>,
     decode_tree: Vec<u32>,
-    max_lookup_bits: BitSize,
+    peek_bits: BitSize,
     max_bits: BitSize,
     min_bits: BitSize,
     max_symbol: usize,
@@ -25,19 +20,14 @@ pub struct CanonicalPrefixDecoder {
 
 impl CanonicalPrefixDecoder {
     #[inline]
-    fn new(
-        max_symbol: usize,
-        max_bits: BitSize,
-        min_bits: BitSize,
-        max_lookup_bits: BitSize,
-    ) -> Self {
+    fn new(max_symbol: usize, peek_bits: BitSize, max_bits: BitSize, min_bits: BitSize) -> Self {
         Self {
             decode_tree: [0].to_vec(),
             lookup_table: Vec::new(),
             max_symbol,
+            peek_bits,
             max_bits,
             min_bits,
-            max_lookup_bits,
             // _table: Vec::new(),
             // _lengths: Vec::new(),
         }
@@ -68,14 +58,13 @@ impl CanonicalPrefixDecoder {
             .map(|(_k, v)| v.size().as_usize())
             .min()
             .ok_or(DecodeError::InvalidData)?;
-        let min_bits = min_bits.min(MAX_LOOKUP_TABLE_BITS);
-        let max_lookup_bits = max_bits.min(MAX_LOOKUP_TABLE_BITS);
+        let peek_bits = max_bits.min(MAX_LOOKUP_TABLE_BITS);
 
         let mut decoder = Self::new(
             max_symbol,
+            BitSize::new(peek_bits as u8).unwrap(),
             BitSize::new(max_bits as u8).unwrap(),
             BitSize::new(min_bits as u8).unwrap(),
-            BitSize::new(max_lookup_bits as u8).unwrap(),
         );
         // decoder._table = prefix_table.clone();
         // decoder._lengths = lengths.to_vec();
@@ -87,13 +76,20 @@ impl CanonicalPrefixDecoder {
 
         decoder
             .lookup_table
-            .resize(2 << max_lookup_bits, LOOKTUP_TABLE_INVAID_VALUE);
-        for (value, path) in prefix_table.iter().copied() {
-            let key = path.reversed().value() as usize | (1 << path.size().as_usize());
-            if key >= decoder.lookup_table.len() {
-                break;
+            .resize(1 << peek_bits, LookupTableEntry::EMPTY);
+        let max_peek_value = decoder.lookup_table.len() - 1;
+        for (sym1, path1) in prefix_table.iter().copied() {
+            if path1.size().as_usize() > peek_bits {
+                continue;
             }
-            decoder.lookup_table[key] = value as u16;
+            if let Some(item) = LookupTableEntry::new(sym1, path1.size()) {
+                let mut path = path1.reversed().value() as usize;
+                let delta = path1.size().power_of_two() as usize;
+                while path <= max_peek_value {
+                    decoder.lookup_table[path] = item;
+                    path += delta;
+                }
+            }
         }
 
         Ok(decoder)
@@ -143,39 +139,19 @@ impl CanonicalPrefixDecoder {
 
     // #[inline(never)]
     pub fn decode(&self, reader: &mut BitStreamReader) -> Result<u32, DecodeError> {
-        let mut key = reader
-            .read_bits(self.min_bits)
-            .ok_or(DecodeError::InvalidData)? as usize;
-        let mut key_bit = self.min_bits.power_of_two() as usize;
-        let max_value = self.max_lookup_bits.power_of_two() as usize;
-
-        while key_bit <= max_value {
-            let read = *self
+        if let Some(key) = reader.peek_bits(self.peek_bits) {
+            let item = self
                 .lookup_table
-                .get(key_bit | key)
+                .get(key as usize)
                 .ok_or(DecodeError::InvalidData)?;
-            if read <= self.max_symbol as u16 {
-                return Ok(read as u32);
+            if let Some(bits) = item.advance_bits() {
+                let symbol1 = item.symbol1();
+                reader.advance(bits);
+                return Ok(symbol1);
             }
-            if reader.read_bool().ok_or(DecodeError::InvalidData)? {
-                key |= key_bit
-            }
-            key_bit <<= 1;
         }
 
         let mut node = self.root_node();
-        for _ in 0..=self.max_lookup_bits.as_usize() {
-            match node.next((key & 1) != 0) {
-                ChildNode::Leaf(value) => {
-                    return Ok(value);
-                }
-                ChildNode::Node(node_next) => {
-                    key >>= 1;
-                    node = node_next;
-                }
-            }
-        }
-
         loop {
             let bit = reader.read_bool().ok_or(DecodeError::InvalidData)?;
             match node.next(bit) {
@@ -387,4 +363,43 @@ impl<'a> DecodeTreeNode<'a> {
 pub enum ChildNode<'a> {
     Leaf(u32),
     Node(DecodeTreeNode<'a>),
+}
+
+/// A lookup table entry for the canonical prefix decoder.
+///
+/// format:
+/// * bit0-8 symbol1
+/// * bit9-11 unused
+/// * bit12-15 bit lengths to advance (1-15)
+///
+#[repr(transparent)]
+#[derive(Debug, Clone, Copy)]
+pub struct LookupTableEntry(u16);
+
+impl LookupTableEntry {
+    pub const EMPTY: Self = Self(0);
+
+    pub fn new(symbol1: usize, bits: BitSize) -> Option<Self> {
+        if bits > BitSize::Bit15 {
+            return None;
+        }
+        let mut acc = symbol1 as u16;
+        acc |= ((bits.as_usize()) as u16) << 12;
+        Some(Self(acc))
+    }
+
+    #[inline]
+    pub const fn is_empty(&self) -> bool {
+        self.0 == 0
+    }
+
+    #[inline]
+    pub const fn symbol1(&self) -> u32 {
+        self.0 as u32 & 0x1ff
+    }
+
+    #[inline]
+    pub const fn advance_bits(&self) -> Option<BitSize> {
+        BitSize::new((self.0 >> 12) as u8)
+    }
 }
