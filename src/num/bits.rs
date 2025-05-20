@@ -412,7 +412,7 @@ impl BitStreamReader<'_> {
 
     /// # SAFETY
     ///
-    /// The `bits` must be less than `self.left`. Otherwise, UB
+    /// The `bits` must be less than or equal to `self.left`. Otherwise, UB
     #[inline]
     unsafe fn _advance(&mut self, bits: usize) {
         self.acc >>= bits;

@@ -4,11 +4,19 @@ macro_rules! test_var_uint32 {
     ($test_type:ident) => {
         use super::$test_type;
         use crate::num::bits::{BitStreamReader, BitStreamWriter};
-        let limit = $test_type::MAX;
-        $test_type::new(limit - 1).unwrap();
-        $test_type::new(limit).unwrap();
-        if limit < u32::MAX {
-            assert!($test_type::new(limit + 1).is_none());
+
+        let limit_low = $test_type::MIN;
+        if limit_low > 0 {
+            assert!($test_type::new(limit_low - 1).is_none());
+        }
+        $test_type::new(limit_low).unwrap();
+        $test_type::new(limit_low + 1).unwrap();
+
+        let limit_high = $test_type::MAX;
+        $test_type::new(limit_high - 1).unwrap();
+        $test_type::new(limit_high).unwrap();
+        if limit_high < u32::MAX {
+            assert!($test_type::new(limit_high + 1).is_none());
         }
 
         for scale in 1..=32 {
@@ -38,7 +46,7 @@ macro_rules! test_var_uint32 {
                 let mask = 1u32.wrapping_shl(scale).wrapping_sub(1);
                 let value = source & mask;
 
-                if value <= limit {
+                if value >= limit_low && value <= limit_high {
                     let scaled = $test_type::new(value)
                         .unwrap_or_else(|| panic!("Invalid value {value:08x}"));
 
@@ -68,7 +76,7 @@ macro_rules! test_var_uint32 {
 
 #[test]
 fn var_offset() {
-    test_var_uint32!(OffsetType);
+    test_var_uint32!(DistanceType);
 }
 
 #[test]
@@ -86,7 +94,7 @@ fn assert_eq_array(lhs: &[u8], rhs: &[u8]) {
 
 #[test]
 fn inflate_lorem() {
-    let lorem = Deflate::inflate(LOREM_ZIP, usize::MAX).unwrap();
+    let lorem = Deflate::inflate(LOREM_ZIP, LOREM_TXT.len()).unwrap();
     assert_eq_array(&lorem, LOREM_TXT);
 }
 
@@ -119,7 +127,7 @@ const LOREM_ZIP: &[u8] = &[
 #[test]
 fn inflate_zero_4m() {
     let size = 0x40_0000;
-    let zero = Deflate::inflate(ZERO_4M_ZIP, usize::MAX).unwrap();
+    let zero = Deflate::inflate(ZERO_4M_ZIP, size).unwrap();
     let mut zero_org = Vec::new();
     zero_org.resize(size, 0);
     assert_eq_array(&zero, &zero_org);
@@ -386,7 +394,7 @@ const ZERO_4M_ZIP: &[u8] = &[
 #[test]
 fn inflate_zero_16m() {
     let size = 0x0100_0000;
-    let zero = Deflate::inflate(ZERO_16M_ZIP, usize::MAX).unwrap();
+    let zero = Deflate::inflate(ZERO_16M_ZIP, size).unwrap();
     let mut zero_org = Vec::new();
     zero_org.resize(size, 0);
     assert_eq_array(&zero, &zero_org);

@@ -51,6 +51,7 @@ fn compress_test() {
         0x9a, 0x1c,
     ];
 
-    let decoded = Deflate::inflate(data, 11).unwrap();
-    assert_eq!(decoded.as_slice(), b"abracadabra");
+    let expected = b"abracadabra";
+    let decoded = Deflate::inflate(data, expected.len()).unwrap();
+    assert_eq!(decoded.as_slice(), expected);
 }

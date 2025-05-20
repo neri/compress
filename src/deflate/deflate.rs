@@ -40,7 +40,7 @@ impl Deflate {
 
         let mut reader = BitStreamReader::new(input);
         if let Some(skip) = skip {
-            reader.read_bits(skip).ok_or(DecodeError::InvalidData)?;
+            reader.advance(skip).ok_or(DecodeError::InvalidData)?;
         }
 
         let mut output = Vec::new();
@@ -144,12 +144,12 @@ impl Deflate {
     fn _decode_block(
         reader: &mut BitStreamReader,
         output: &mut Vec<u8>,
-        window_size: usize,
+        _window_size: usize,
         limit_len: usize,
         lengths_lit: &[u8],
         lengths_dist: &[u8],
     ) -> Result<(), DecodeError> {
-        output.reserve(window_size);
+        // output.reserve(window_size);
         if lengths_dist.len() >= 2 {
             let decoder_lit = CanonicalPrefixDecoder::with_lengths(lengths_lit)?;
             let decoder_dist = CanonicalPrefixDecoder::with_lengths(lengths_dist)?;
@@ -164,11 +164,10 @@ impl Deflate {
                     break;
                 } else {
                     // length/distance pair
-                    let len = 3 + LenType::decode_value((lit - 257) as u8, reader)
-                        .ok_or(DecodeError::InvalidData)?
-                        as usize;
+                    let len = LenType::decode_value((lit - 257) as u8, reader)
+                        .ok_or(DecodeError::InvalidData)? as usize;
                     let offset =
-                        1 + OffsetType::decode_value(decoder_dist.decode(reader)? as u8, reader)
+                        DistanceType::decode_value(decoder_dist.decode(reader)? as u8, reader)
                             .ok_or(DecodeError::InvalidData)? as usize;
 
                     if offset > output.len() {
@@ -200,7 +199,7 @@ impl Deflate {
 }
 
 macro_rules! var_uint32 {
-    ($class_name:ident, $base_table:ident, $max_value:expr) => {
+    ($class_name:ident, $base_table:ident, $min_value:expr, $max_value:expr) => {
         #[derive(Debug, PartialEq)]
         pub struct $class_name {
             pub trailing: Option<VarBitValue>,
@@ -208,6 +207,8 @@ macro_rules! var_uint32 {
         }
 
         impl $class_name {
+            pub const MIN: u32 = $min_value;
+
             pub const MAX: u32 = $max_value;
 
             #[inline]
@@ -284,71 +285,97 @@ macro_rules! var_uint32 {
     };
 }
 
-var_uint32!(OffsetType, VARIABLE_OFFSET_BASE_TABLE, 32767);
+var_uint32!(DistanceType, VARIABLE_DISTANCE_BASE_TABLE, 1, 32768);
 
-static VARIABLE_OFFSET_BASE_TABLE: [(Option<BitSize>, u32); 30] = [
-    (None, 0),
+//      Extra           Extra               Extra
+// Code Bits Dist  Code Bits   Dist     Code Bits Distance
+// ---- ---- ----  ---- ----  ------    ---- ---- --------
+//  0   0    1     10   4     33-48    20    9   1025-1536
+//  1   0    2     11   4     49-64    21    9   1537-2048
+//  2   0    3     12   5     65-96    22   10   2049-3072
+//  3   0    4     13   5     97-128   23   10   3073-4096
+//  4   1   5,6    14   6    129-192   24   11   4097-6144
+//  5   1   7,8    15   6    193-256   25   11   6145-8192
+//  6   2   9-12   16   7    257-384   26   12  8193-12288
+//  7   2  13-16   17   7    385-512   27   12 12289-16384
+//  8   3  17-24   18   8    513-768   28   13 16385-24576
+//  9   3  25-32   19   8   769-1024   29   13 24577-32768
+static VARIABLE_DISTANCE_BASE_TABLE: [(Option<BitSize>, u32); 30] = [
     (None, 1),
     (None, 2),
     (None, 3),
-    (Some(BitSize::Bit1), 4),
-    (Some(BitSize::Bit1), 6),
-    (Some(BitSize::Bit2), 8),
-    (Some(BitSize::Bit2), 12),
-    (Some(BitSize::Bit3), 16),
-    (Some(BitSize::Bit3), 24),
-    (Some(BitSize::Bit4), 32),
-    (Some(BitSize::Bit4), 48),
-    (Some(BitSize::Bit5), 64),
-    (Some(BitSize::Bit5), 96),
-    (Some(BitSize::Bit6), 128),
-    (Some(BitSize::Bit6), 192),
-    (Some(BitSize::Bit7), 256),
-    (Some(BitSize::Bit7), 384),
-    (Some(BitSize::Bit8), 512),
-    (Some(BitSize::Bit8), 768),
-    (Some(BitSize::Bit9), 1024),
-    (Some(BitSize::Bit9), 1536),
-    (Some(BitSize::Bit10), 2048),
-    (Some(BitSize::Bit10), 3072),
-    (Some(BitSize::Bit11), 4096),
-    (Some(BitSize::Bit11), 6144),
-    (Some(BitSize::Bit12), 8192),
-    (Some(BitSize::Bit12), 12288),
-    (Some(BitSize::Bit13), 16384),
-    (Some(BitSize::Bit13), 24576),
+    (None, 4),
+    (Some(BitSize::Bit1), 5),
+    (Some(BitSize::Bit1), 7),
+    (Some(BitSize::Bit2), 9),
+    (Some(BitSize::Bit2), 13),
+    (Some(BitSize::Bit3), 17),
+    (Some(BitSize::Bit3), 25),
+    (Some(BitSize::Bit4), 33),
+    (Some(BitSize::Bit4), 49),
+    (Some(BitSize::Bit5), 65),
+    (Some(BitSize::Bit5), 97),
+    (Some(BitSize::Bit6), 129),
+    (Some(BitSize::Bit6), 193),
+    (Some(BitSize::Bit7), 257),
+    (Some(BitSize::Bit7), 385),
+    (Some(BitSize::Bit8), 513),
+    (Some(BitSize::Bit8), 769),
+    (Some(BitSize::Bit9), 1025),
+    (Some(BitSize::Bit9), 1537),
+    (Some(BitSize::Bit10), 2049),
+    (Some(BitSize::Bit10), 3073),
+    (Some(BitSize::Bit11), 4097),
+    (Some(BitSize::Bit11), 6145),
+    (Some(BitSize::Bit12), 8193),
+    (Some(BitSize::Bit12), 12289),
+    (Some(BitSize::Bit13), 16385),
+    (Some(BitSize::Bit13), 24577),
 ];
 
-var_uint32!(LenType, VARIABLE_LENGTH_BASE_TABLE, 255);
+var_uint32!(LenType, VARIABLE_LENGTH_BASE_TABLE, 3, 258);
 
+//      Extra               Extra               Extra
+// Code Bits Length(s) Code Bits Lengths   Code Bits Length(s)
+// ---- ---- ------     ---- ---- -------   ---- ---- -------
+//  257   0     3       267   1   15,16     277   4   67-82
+//  258   0     4       268   1   17,18     278   4   83-98
+//  259   0     5       269   2   19-22     279   4   99-114
+//  260   0     6       270   2   23-26     280   4  115-130
+//  261   0     7       271   2   27-30     281   5  131-162
+//  262   0     8       272   2   31-34     282   5  163-194
+//  263   0     9       273   3   35-42     283   5  195-226
+//  264   0    10       274   3   43-50     284   5  227-257
+//  265   1  11,12      275   3   51-58     285   0    258
+//  266   1  13,14      276   3   59-66
 static VARIABLE_LENGTH_BASE_TABLE: [(Option<BitSize>, u32); 29] = [
-    (None, 0),
-    (None, 1),
-    (None, 2),
     (None, 3),
     (None, 4),
     (None, 5),
     (None, 6),
     (None, 7),
-    (Some(BitSize::Bit1), 8),
-    (Some(BitSize::Bit1), 10),
-    (Some(BitSize::Bit1), 12),
-    (Some(BitSize::Bit1), 14),
-    (Some(BitSize::Bit2), 16),
-    (Some(BitSize::Bit2), 20),
-    (Some(BitSize::Bit2), 24),
-    (Some(BitSize::Bit2), 28),
-    (Some(BitSize::Bit3), 32),
-    (Some(BitSize::Bit3), 40),
-    (Some(BitSize::Bit3), 48),
-    (Some(BitSize::Bit3), 56),
-    (Some(BitSize::Bit4), 64),
-    (Some(BitSize::Bit4), 80),
-    (Some(BitSize::Bit4), 96),
-    (Some(BitSize::Bit4), 112),
-    (Some(BitSize::Bit5), 128),
-    (Some(BitSize::Bit5), 160),
-    (Some(BitSize::Bit5), 192),
-    (Some(BitSize::Bit5), 224),
-    (None, 255),
+    (None, 8),
+    (None, 9),
+    (None, 10),
+    (Some(BitSize::Bit1), 11),
+    (Some(BitSize::Bit1), 13),
+    (Some(BitSize::Bit1), 15),
+    (Some(BitSize::Bit1), 17),
+    (Some(BitSize::Bit2), 19),
+    (Some(BitSize::Bit2), 23),
+    (Some(BitSize::Bit2), 27),
+    (Some(BitSize::Bit2), 31),
+    (Some(BitSize::Bit3), 35),
+    (Some(BitSize::Bit3), 43),
+    (Some(BitSize::Bit3), 51),
+    (Some(BitSize::Bit3), 59),
+    (Some(BitSize::Bit4), 67),
+    (Some(BitSize::Bit4), 83),
+    (Some(BitSize::Bit4), 99),
+    (Some(BitSize::Bit4), 115),
+    (Some(BitSize::Bit5), 131),
+    (Some(BitSize::Bit5), 163),
+    (Some(BitSize::Bit5), 195),
+    (Some(BitSize::Bit5), 227),
+    (None, 258),
 ];
