@@ -14,8 +14,6 @@ pub struct CanonicalPrefixDecoder {
     max_bits: BitSize,
     min_bits: BitSize,
     max_symbol: usize,
-    // _table: Vec<(usize, VarBitValue)>,
-    // _lengths: Vec<u8>,
 }
 
 impl CanonicalPrefixDecoder {
@@ -28,15 +26,12 @@ impl CanonicalPrefixDecoder {
             peek_bits,
             max_bits,
             min_bits,
-            // _table: Vec::new(),
-            // _lengths: Vec::new(),
         }
     }
 
     pub fn with_lengths(lengths: &[u8]) -> Result<Self, DecodeError> {
-        let prefix_table = CanonicalPrefixDecoder::reorder_prefix_table(
-            lengths.iter().enumerate().map(|(i, &v)| (i, v)),
-        )?;
+        let prefix_table =
+            Self::reorder_prefix_table(lengths.iter().enumerate().map(|(i, &v)| (i, v)))?;
 
         if prefix_table.len() < 2 {
             // The prefix table must have at least two entries
@@ -58,6 +53,7 @@ impl CanonicalPrefixDecoder {
             .map(|(_k, v)| v.size().as_usize())
             .min()
             .ok_or(DecodeError::InvalidData)?;
+
         let peek_bits = max_bits.min(MAX_LOOKUP_TABLE_BITS);
 
         let mut decoder = Self::new(
@@ -66,8 +62,6 @@ impl CanonicalPrefixDecoder {
             BitSize::new(max_bits as u8).unwrap(),
             BitSize::new(min_bits as u8).unwrap(),
         );
-        // decoder._table = prefix_table.clone();
-        // decoder._lengths = lengths.to_vec();
 
         decoder.decode_tree.reserve(prefix_table.len() * 2);
         for (value, path) in prefix_table.iter().copied() {
@@ -98,7 +92,7 @@ impl CanonicalPrefixDecoder {
     fn insert_node(&mut self, path: VarBitValue, value: u32) -> Result<(), DecodeError> {
         let mut index = 0;
         let mut rpath = path.reversed().value();
-        for _ in 0..path.size().as_usize() - 1 {
+        for _ in 1..path.size().as_usize() {
             let bit = rpath & 1;
             let mut next = self.decode_tree[index];
             if bit != 0 {
@@ -107,6 +101,7 @@ impl CanonicalPrefixDecoder {
                 next &= 0xffff;
             }
             if (next & DecodeTreeNode::LITERAL_FLAG) != 0 {
+                // Perhaps the prefix table is invalid or decoding failed.
                 return Err(DecodeError::InvalidData);
             }
             if next == 0 {
@@ -153,7 +148,7 @@ impl CanonicalPrefixDecoder {
 
         let mut node = self.root_node();
         loop {
-            let bit = reader.read_bool().ok_or(DecodeError::InvalidData)?;
+            let bit = reader.read_bool().ok_or(DecodeError::UnexpectedEof)?;
             match node.next(bit) {
                 ChildNode::Leaf(value) => {
                     return Ok(value);
@@ -379,13 +374,12 @@ pub struct LookupTableEntry(u16);
 impl LookupTableEntry {
     pub const EMPTY: Self = Self(0);
 
+    #[inline]
     pub fn new(symbol1: usize, bits: BitSize) -> Option<Self> {
         if bits > BitSize::Bit15 {
             return None;
         }
-        let mut acc = symbol1 as u16;
-        acc |= ((bits.as_usize()) as u16) << 12;
-        Some(Self(acc))
+        Some(Self((bits.as_usize() as u16) | (symbol1 as u16) << 4))
     }
 
     #[inline]
@@ -395,11 +389,11 @@ impl LookupTableEntry {
 
     #[inline]
     pub const fn symbol1(&self) -> u32 {
-        self.0 as u32 & 0x1ff
+        self.0 as u32 >> 4
     }
 
     #[inline]
     pub const fn advance_bits(&self) -> Option<BitSize> {
-        BitSize::new((self.0 >> 12) as u8)
+        BitSize::new((self.0 & 15) as u8)
     }
 }

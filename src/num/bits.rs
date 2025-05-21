@@ -180,11 +180,6 @@ impl VarBitValue {
     }
 
     #[inline]
-    pub fn canonical_value(&self) -> u32 {
-        self.value() & self.size().mask()
-    }
-
-    #[inline]
     pub fn to_vec<T>(iter: T) -> Vec<u8>
     where
         T: Iterator<Item = VarBitValue>,
@@ -378,7 +373,7 @@ impl<'a> BitStreamReader<'a> {
     }
 }
 
-impl BitStreamReader<'_> {
+impl<'a> BitStreamReader<'a> {
     #[inline]
     fn _iter_next(&mut self) -> Option<u8> {
         let (left, right) = self.slice.split_first()?;
@@ -465,20 +460,17 @@ impl BitStreamReader<'_> {
     }
 
     // #[inline(never)]
-    pub fn peek_bits(&self, bits: BitSize) -> Option<u32> {
+    pub fn peek_bits(&mut self, bits: BitSize) -> Option<u32> {
         if bits.as_usize() <= self.left {
             Some(self.acc & bits.mask())
         } else {
-            let mut acc = self.acc;
-            let mut left = self.left;
-            let mut slice = self.slice;
-            while bits.as_usize() > left {
-                let (data, _slice) = slice.split_first()?;
-                acc |= (*data as u32) << left;
-                left += 8;
-                slice = _slice;
+            while bits.as_usize() > self.left {
+                let (data, next) = self.slice.split_first()?;
+                self.acc |= (*data as u32) << self.left;
+                self.left += 8;
+                self.slice = next;
             }
-            Some(acc & bits.mask())
+            Some(self.acc & bits.mask())
         }
     }
 

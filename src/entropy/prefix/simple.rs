@@ -159,10 +159,10 @@ fn simple_prefix() {
     assert_eq!(coder.data, [0b10101010, 0b11110000]);
     assert_eq!(coder.table, SimplePrefixTable::Binary(1, 2));
 
-    let input = vec![2, 1, 2, 1, 2, 1, 2, 1, 1, 1, 1, 1, 2, 2, 2, 2];
+    let input = vec![2, 2, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2];
     let coder = SimplePrefixCoder::encode(&input, true).unwrap();
     assert_eq!(coder.len, input.len());
-    assert_eq!(coder.data, [0b01010101, 0b11110000]);
+    assert_eq!(coder.data, [0b00001111, 0b11110000]);
     assert_eq!(coder.table, SimplePrefixTable::Binary(1, 2));
 
     let input = vec![2, 1, 2, 1, 2, 1, 2, 3];

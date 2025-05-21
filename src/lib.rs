@@ -18,7 +18,6 @@ pub mod stats;
 #[path = "stk1/stk1.rs"]
 pub mod stk1;
 
-#[path = "deflate/deflate.rs"]
 pub mod deflate;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -27,6 +26,7 @@ pub enum DecodeError {
     InvalidData,
     OutOfMemory,
     UnsupportedFormat,
+    UnexpectedEof,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
