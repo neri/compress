@@ -1,6 +1,7 @@
 //! My compression library
 
-#![cfg_attr(not(any(test, feature = "std")), no_std)]
+// #![cfg_attr(not(any(test, feature = "std")), no_std)]
+#![cfg_attr(not(test), no_std)]
 
 extern crate alloc;
 

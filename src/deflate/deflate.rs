@@ -10,7 +10,10 @@ use crate::{
         Matches,
         lzss::{self, LZSS},
     },
-    num::bits::{BitStreamWriter, Write},
+    num::{
+        bits::{BitStreamWriter, Write},
+        math,
+    },
 };
 use core::f64::{self, INFINITY};
 
@@ -270,13 +273,13 @@ impl<'a> DeflateIrBlock<'a> {
         dist_len: usize,
         entropy_dist: f64,
     ) -> usize {
-        let lit_len_size = (lit_len as f64 * entropy_lit.clamp(1.0, INFINITY)).ceil();
+        let lit_len_size = math::ceil(lit_len as f64 * entropy_lit.clamp(1.0, INFINITY));
         let dist_size = if entropy_dist > 0.0 {
-            (dist_len as f64 * entropy_dist.clamp(1.0, INFINITY)).ceil()
+            math::ceil(dist_len as f64 * entropy_dist.clamp(1.0, INFINITY))
         } else {
             0.0
         };
-        0 + ((lit_len_size + dist_size) / 8.0).ceil() as usize
+        0 + math::ceil((lit_len_size + dist_size) / 8.0) as usize
     }
 
     #[inline]

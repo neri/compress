@@ -9,9 +9,9 @@ libm = { version = "0.2" }
 [dev-dependencies]
 base64 = { version = "0.22" }
 
-[features]
-default = ["std"]
-std = []
+# [features]
+# default = ["std"]
+# std = []
 
 [workspace]
 members = [
