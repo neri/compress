@@ -1,4 +1,5 @@
-use super::Deflate;
+use super::*;
+use base64::prelude::*;
 
 macro_rules! test_var_uint32 {
     ($test_type:ident) => {
@@ -9,12 +10,18 @@ macro_rules! test_var_uint32 {
         if limit_low > 0 {
             assert!($test_type::new(limit_low - 1).is_none());
         }
-        $test_type::new(limit_low).unwrap();
-        $test_type::new(limit_low + 1).unwrap();
+        assert_eq!(limit_low, $test_type::new(limit_low).unwrap().value(),);
+        assert_eq!(
+            limit_low + 1,
+            $test_type::new(limit_low + 1).unwrap().value(),
+        );
 
         let limit_high = $test_type::MAX;
-        $test_type::new(limit_high - 1).unwrap();
-        $test_type::new(limit_high).unwrap();
+        assert_eq!(
+            limit_high - 1,
+            $test_type::new(limit_high - 1).unwrap().value(),
+        );
+        assert_eq!(limit_high, $test_type::new(limit_high).unwrap().value(),);
         if limit_high < u32::MAX {
             assert!($test_type::new(limit_high + 1).is_none());
         }
@@ -75,7 +82,7 @@ macro_rules! test_var_uint32 {
 }
 
 #[test]
-fn var_offset() {
+fn var_distance() {
     test_var_uint32!(DistanceType);
 }
 
@@ -86,16 +93,28 @@ fn var_length() {
 
 #[track_caller]
 fn assert_eq_array(lhs: &[u8], rhs: &[u8]) {
-    assert_eq!(lhs.len(), rhs.len());
     for (i, (l, r)) in lhs.iter().zip(rhs.iter()).enumerate() {
-        assert_eq!(*l, *r, "byte {i} is not equal");
+        if *l != *r {
+            panic!("Array is not identical at index {i}\n  left: {l:02x}\n right: {r:02x}");
+        }
     }
+    assert_eq!(lhs.len(), rhs.len(), "Array lengths are not equal");
 }
 
-#[test]
-fn inflate_lorem() {
-    let lorem = Deflate::inflate(LOREM_ZIP, LOREM_TXT.len()).unwrap();
-    assert_eq_array(&lorem, LOREM_TXT);
+#[allow(unused)]
+fn hex_dump(data: &[u8]) {
+    let mut iter = data.iter();
+    for addr in (0..data.len()).step_by(16) {
+        print!("{:08x}: ", addr);
+        for _ in 0..16 {
+            if let Some(byte) = iter.next() {
+                print!("{:02x} ", byte);
+            } else {
+                print!("   ");
+            }
+        }
+        println!();
+    }
 }
 
 const LOREM_TXT: &[u8] = b"Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.
@@ -104,30 +123,38 @@ Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu 
 Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.
 ";
 
-const LOREM_ZIP: &[u8] = &[
-    0x35, 0x90, 0xc1, 0x71, 0x43, 0x31, 0x08, 0x44, 0xef, 0xbf, 0x8a, 0x2d, 0xc0, 0xe3, 0x2a, 0x92,
-    0x5b, 0xae, 0x29, 0x80, 0x20, 0xec, 0x30, 0x23, 0x09, 0x59, 0x02, 0x8f, 0xcb, 0x0f, 0xca, 0x4f,
-    0x6e, 0x42, 0xc0, 0xb2, 0xfb, 0x3e, 0x6c, 0x4a, 0x83, 0x8e, 0x15, 0x0d, 0xc5, 0xaa, 0x4d, 0x2c,
-    0x75, 0x50, 0x13, 0xbf, 0x80, 0xad, 0x2f, 0x61, 0x17, 0x8f, 0x09, 0x2a, 0x3a, 0x74, 0xb1, 0xf6,
-    0x3b, 0xa4, 0x6a, 0x36, 0x97, 0x94, 0x5c, 0x80, 0x68, 0xac, 0x66, 0x05, 0x2e, 0x6d, 0xe4, 0xb2,
-    0x76, 0xd6, 0xa2, 0x25, 0xba, 0x23, 0x1c, 0x95, 0xbe, 0x52, 0x1e, 0xe2, 0xa7, 0xb4, 0xa0, 0xd1,
-    0xbd, 0x13, 0xa8, 0xea, 0x23, 0xe8, 0x7a, 0x7c, 0x3a, 0xa4, 0x6b, 0x4b, 0x6d, 0x34, 0xdd, 0x8f,
-    0x67, 0x96, 0xd4, 0x2e, 0x78, 0x84, 0x2e, 0x74, 0x5b, 0x3e, 0xa3, 0x40, 0x5e, 0x32, 0x59, 0x9d,
-    0x5c, 0xad, 0x23, 0x6a, 0xa5, 0xc6, 0x76, 0x2a, 0xef, 0x21, 0x5d, 0xba, 0x2f, 0xfd, 0x4a, 0xea,
-    0xc8, 0x61, 0x08, 0xa5, 0xf1, 0x96, 0x9e, 0xec, 0x0c, 0x90, 0xa7, 0xfc, 0x7a, 0xbc, 0x6d, 0x49,
-    0x0a, 0x17, 0xe8, 0x8c, 0x74, 0x72, 0x66, 0xd5, 0x8e, 0x29, 0x63, 0xca, 0xb7, 0xf4, 0x22, 0x33,
-    0x83, 0xe7, 0xc7, 0xd3, 0x6a, 0x8c, 0x3c, 0x27, 0x69, 0x27, 0x93, 0x42, 0xd6, 0x12, 0xb0, 0xd6,
-    0xfa, 0x4f, 0x28, 0x03, 0x05, 0x6e, 0x71, 0x57, 0x72, 0xf4, 0x6d, 0x08, 0x83, 0x66, 0x16, 0x31,
-    0xaf, 0xc7, 0xfb, 0x8b, 0x65, 0xb8, 0xc4, 0xc6, 0x98, 0x0c, 0x8c, 0x99, 0x84, 0x73, 0x8e, 0x63,
-    0x68, 0x21, 0xdf, 0x1b, 0x99, 0x62, 0x4c, 0xd3, 0x22, 0x7d, 0x53, 0xdc, 0xa4, 0xf2, 0x28, 0x47,
-    0x1d, 0xb4, 0x73, 0xc3, 0x6e, 0x37, 0x65, 0x25, 0x14, 0x59, 0x32, 0x77, 0xb7, 0x59, 0xdd, 0x36,
-    0x68, 0x03, 0xd2, 0xc4, 0xb1, 0xfe, 0xb8, 0x46, 0xbb, 0x1e, 0x3f,
-];
+const LOREM_ZIP_BASE64: &[u8] = b"NJDBcUMxCETvv4otwOMqkluuKYAg7DAjCVkCj8sPyk9uQsCy+z5sSoOOFQ3Fqk0sdVATv4CtL2EXjwkqOnSx9jukajaXlFyAaKxmBS5t5LJ21qIluiMclb5SHuKntKDRvROo6iPoenw6pGtLbTTdj2eW1C54hC50Wz6jQF4yWZ1crSNqpcZ2Ku8hXbov/UrqyGEIpfGWnuwMkKf8erxtSQoX6Ix0cmbVjiljyrf0IjOD58fTaow8J2knk0LWErDW+k8oAwVucVdy9G0Ig2YWMa/H+4tluMTGmAyMmYRzjmNoId8bmWJM0yJ9U9yk8ihHHbRzw243ZSUUWTJ3t1ndNmgD0sSx/rhGux4/AAAA//8DAA==";
+
+#[test]
+fn inflate_lorem() {
+    let lorem_zip = BASE64_STANDARD.decode(LOREM_ZIP_BASE64).unwrap();
+    let lorem = inflate(&lorem_zip, LOREM_TXT.len()).unwrap();
+    assert_eq_array(&lorem, LOREM_TXT);
+}
+
+#[test]
+fn deflate_lorem() {
+    let input = LOREM_TXT;
+    let encoded1 = deflate(input, CompressionLevel::Default, None).unwrap();
+    let decoded = inflate(&encoded1, input.len()).unwrap();
+    assert_eq_array(&decoded, input);
+
+    let encoded2 = deflate(
+        input,
+        CompressionLevel::Default,
+        OptionConfig::new().zlib().into(),
+    )
+    .unwrap();
+    let decoded = inflate(&encoded2, input.len()).unwrap();
+    assert_eq_array(&decoded, input);
+
+    assert_eq!(encoded1.len() + 2 + 4, encoded2.len());
+}
 
 #[test]
 fn inflate_zero_4m() {
     let size = 0x40_0000;
-    let zero = Deflate::inflate(ZERO_4M_ZIP, size).unwrap();
+    let zero = inflate(ZERO_4M_ZIP, size).unwrap();
     let mut zero_org = Vec::new();
     zero_org.resize(size, 0);
     assert_eq_array(&zero, &zero_org);
@@ -394,7 +421,7 @@ const ZERO_4M_ZIP: &[u8] = &[
 #[test]
 fn inflate_zero_16m() {
     let size = 0x0100_0000;
-    let zero = Deflate::inflate(ZERO_16M_ZIP, size).unwrap();
+    let zero = inflate(ZERO_16M_ZIP, size).unwrap();
     let mut zero_org = Vec::new();
     zero_org.resize(size, 0);
     assert_eq_array(&zero, &zero_org);
@@ -1422,3 +1449,64 @@ const ZERO_16M_ZIP: &[u8] = &[
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x00, 0xc0, 0x55,
 ];
+
+#[test]
+fn deflate_zero_16m() {
+    let size = 0x0100_0000;
+    let mut input = Vec::new();
+    input.resize(size, 0);
+
+    let encoded: Vec<u8> = deflate(&input, CompressionLevel::Default, None).unwrap();
+    assert_eq!(encoded.len(), ZERO_16M_ZIP.len(),);
+    assert_eq_array(&encoded[..16], &ZERO_16M_ZIP[..16]);
+    assert_eq_array(
+        &encoded[ZERO_16M_ZIP.len() - 16..],
+        &ZERO_16M_ZIP[ZERO_16M_ZIP.len() - 16..],
+    );
+
+    let decoded = inflate(&encoded, input.len()).unwrap();
+    assert_eq_array(&decoded, &input);
+}
+
+#[test]
+fn deflate_b8x8() {
+    // (1+3x8) x 8
+    let input = [0u8; 25 * 8];
+    let encoded1 = deflate(
+        &input,
+        CompressionLevel::Best,
+        OptionConfig::new().zlib().into(),
+    )
+    .unwrap();
+    assert_eq_array(
+        &encoded1,
+        &[
+            0x08, 0xd7, 0x63, 0x60, 0x18, 0x1e, 0x00, 0x00, 0x00, 0xc8, 0x00, 0x01,
+        ],
+    );
+    let decoded = inflate(&encoded1, input.len()).unwrap();
+    assert_eq_array(&decoded, &input);
+
+    let encoded2 = deflate(&input, CompressionLevel::Best, None).unwrap();
+    assert_eq_array(&encoded2, &[0x63, 0x60, 0x18, 0x1e, 0x00, 0x00]);
+    let decoded = inflate(&encoded2, input.len()).unwrap();
+    assert_eq_array(&decoded, &input);
+    assert_eq!(encoded2.len() + 2 + 4, encoded1.len());
+
+    let encoded3 = deflate(&input, CompressionLevel::Fastest, None).unwrap();
+    assert!(encoded3.len() >= encoded2.len());
+    let decoded = inflate(&encoded3, input.len()).unwrap();
+    assert_eq_array(&decoded, &input);
+}
+
+#[test]
+fn huffman_test() {
+    let data: &[u8] = &[
+        0x05, 0xc0, 0x31, 0x01, 0x00, 0x00, 0x00, 0x01, 0xb0, 0xac, 0x43, 0x02, 0xfd, 0x2f, 0xb9,
+        0x9a, 0x1c,
+    ];
+
+    let expected = b"abracadabra";
+    let decoded = inflate(data, expected.len()).unwrap();
+    assert_eq!(decoded.as_slice(), expected);
+}

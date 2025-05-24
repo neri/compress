@@ -20,14 +20,11 @@
 //!
 //! Related Documents: <http://osask.net/w/196.html> (But different from known final specifications)
 
-use crate::*;
-use crate::{
-    lz::{
-        self, Matches,
-        cache::{OffsetCache, OffsetCache3},
-    },
-    slice_window::SliceWindow,
+use crate::lz::{
+    self, Matches, SliceWindow,
+    cache::{OffsetCache, OffsetCache3},
 };
+use crate::*;
 use alloc::{format, string::String, vec::Vec};
 
 mod s7s;

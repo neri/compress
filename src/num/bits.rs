@@ -341,7 +341,8 @@ impl BitStreamWriter {
         self.bit_position += remain_bits;
     }
 
-    fn flush(&mut self) {
+    #[inline]
+    pub fn skip_to_next_byte_boundary(&mut self) {
         if self.bit_position > 0 {
             self.buf.push(self.acc);
             self.acc = 0;
@@ -351,15 +352,64 @@ impl BitStreamWriter {
 
     #[inline]
     pub fn into_bytes(mut self) -> Vec<u8> {
-        self.flush();
+        self.skip_to_next_byte_boundary();
         self.buf
     }
 }
 
+pub trait Write<T> {
+    fn write(&mut self, value: T);
+}
+
+impl Write<bool> for BitStreamWriter {
+    #[inline]
+    fn write(&mut self, value: bool) {
+        self.push_bool(value);
+    }
+}
+
+impl Write<Nibble> for BitStreamWriter {
+    #[inline]
+    fn write(&mut self, value: Nibble) {
+        self.push_nibble(value);
+    }
+}
+
+impl Write<u8> for BitStreamWriter {
+    #[inline]
+    fn write(&mut self, value: u8) {
+        self.push_byte(value);
+    }
+}
+
+impl Write<&[u8]> for BitStreamWriter {
+    #[inline]
+    fn write(&mut self, value: &[u8]) {
+        for &byte in value.iter() {
+            self.push_byte(byte);
+        }
+    }
+}
+
+impl Write<VarBitValue> for BitStreamWriter {
+    #[inline]
+    fn write(&mut self, value: VarBitValue) {
+        self.push(value);
+    }
+}
+
+impl Write<&[VarBitValue]> for BitStreamWriter {
+    #[inline]
+    fn write(&mut self, value: &[VarBitValue]) {
+        self.push_slice(value);
+    }
+}
+
+#[repr(C)]
 pub struct BitStreamReader<'a> {
-    slice: &'a [u8],
-    left: usize,
     acc: u32,
+    left: usize,
+    slice: &'a [u8],
 }
 
 impl<'a> BitStreamReader<'a> {
@@ -409,7 +459,7 @@ impl<'a> BitStreamReader<'a> {
     ///
     /// The `bits` must be less than or equal to `self.left`. Otherwise, UB
     #[inline]
-    unsafe fn _advance(&mut self, bits: usize) {
+    pub unsafe fn _advance(&mut self, bits: usize) {
         self.acc >>= bits;
         self.left -= bits;
     }
@@ -476,23 +526,36 @@ impl<'a> BitStreamReader<'a> {
 
     #[inline]
     pub fn skip_to_next_byte_boundary(&mut self) {
-        self.acc = 0;
-        self.left = 0;
+        if self.left & 7 != 0 {
+            unsafe {
+                self._advance(self.left & 7);
+            }
+        }
     }
 
     /// Skip to the next byte boundary and read the next byte
     #[inline]
     pub fn read_next_byte(&mut self) -> Option<u8> {
         self.skip_to_next_byte_boundary();
-        self._iter_next()
+        self._read_next_byte()
+    }
+
+    #[inline]
+    fn _read_next_byte(&mut self) -> Option<u8> {
+        if self.left == 0 {
+            self._iter_next()
+        } else {
+            self.read_byte()
+        }
     }
 
     /// Skip to the next byte boundary and read the specified number of bytes
     #[inline]
     pub fn read_next_bytes<const N: usize>(&mut self) -> Option<[u8; N]> {
+        self.skip_to_next_byte_boundary();
         let mut result = [0; N];
         for p in result.iter_mut() {
-            *p = self.read_next_byte()?;
+            *p = self._read_next_byte()?;
         }
         Some(result)
     }

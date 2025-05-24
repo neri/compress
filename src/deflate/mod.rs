@@ -8,21 +8,12 @@ use crate::*;
 #[cfg(test)]
 mod tests;
 
+pub mod adler32;
+
+mod deflate;
 mod inflate;
-
-pub struct Deflate;
-
-impl Deflate {
-    // /// Compresses a deflate stream.
-    // pub fn deflate(input: &[u8],) -> Result<Vec<u8>, EncodeError> {
-    //     todo!()
-    // }
-
-    /// Decompresses a deflate stream.
-    pub fn inflate(input: &[u8], decode_size: usize) -> Result<Vec<u8>, DecodeError> {
-        inflate::inflate(input, decode_size)
-    }
-}
+pub use deflate::*;
+pub use inflate::*;
 
 macro_rules! var_uint32 {
     ($class_name:ident, $base_table:ident, $min_value:expr, $max_value:expr) => {
@@ -91,18 +82,22 @@ macro_rules! var_uint32 {
                 }
             }
 
-            pub fn from_raw(leading: u8, trailing: Option<VarBitValue>) -> Self {
+            #[inline]
+            pub const fn from_raw(leading: u8, trailing: Option<VarBitValue>) -> Self {
                 Self { leading, trailing }
             }
 
-            pub fn leading(&self) -> u8 {
+            #[inline]
+            pub const fn leading(&self) -> u8 {
                 self.leading
             }
 
-            pub fn trailing(&self) -> Option<VarBitValue> {
+            #[inline]
+            pub const fn trailing(&self) -> Option<VarBitValue> {
                 self.trailing
             }
 
+            #[inline]
             pub fn trailing_bits_for(leading: u8) -> Option<BitSize> {
                 let (size, _) = $base_table.get(leading as usize)?;
                 *size
@@ -110,8 +105,6 @@ macro_rules! var_uint32 {
         }
     };
 }
-
-var_uint32!(DistanceType, VARIABLE_DISTANCE_BASE_TABLE, 1, 32768);
 
 //      Extra           Extra               Extra
 // Code Bits Dist  Code Bits   Dist     Code Bits Distance
@@ -126,6 +119,7 @@ var_uint32!(DistanceType, VARIABLE_DISTANCE_BASE_TABLE, 1, 32768);
 //  7   2  13-16   17   7    385-512   27   12 12289-16384
 //  8   3  17-24   18   8    513-768   28   13 16385-24576
 //  9   3  25-32   19   8   769-1024   29   13 24577-32768
+var_uint32!(DistanceType, VARIABLE_DISTANCE_BASE_TABLE, 1, 32768);
 static VARIABLE_DISTANCE_BASE_TABLE: [(Option<BitSize>, u32); 30] = [
     (None, 1),
     (None, 2),
@@ -159,8 +153,6 @@ static VARIABLE_DISTANCE_BASE_TABLE: [(Option<BitSize>, u32); 30] = [
     (Some(BitSize::Bit13), 24577),
 ];
 
-var_uint32!(LenType, VARIABLE_LENGTH_BASE_TABLE, 3, 258);
-
 //      Extra               Extra               Extra
 // Code Bits Length(s) Code Bits Lengths   Code Bits Length(s)
 // ---- ---- ------     ---- ---- -------   ---- ---- -------
@@ -174,6 +166,7 @@ var_uint32!(LenType, VARIABLE_LENGTH_BASE_TABLE, 3, 258);
 //  264   0    10       274   3   43-50     284   5  227-257
 //  265   1  11,12      275   3   51-58     285   0    258
 //  266   1  13,14      276   3   59-66
+var_uint32!(LenType, VARIABLE_LENGTH_BASE_TABLE, 3, 258);
 static VARIABLE_LENGTH_BASE_TABLE: [(Option<BitSize>, u32); 29] = [
     (None, 3),
     (None, 4),
@@ -205,3 +198,44 @@ static VARIABLE_LENGTH_BASE_TABLE: [(Option<BitSize>, u32); 29] = [
     (Some(BitSize::Bit5), 227),
     (None, 258),
 ];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
+pub enum WindowSize {
+    Size256 = 0,
+    Size512,
+    Size1024,
+    Size2048,
+    Size4096,
+    Size8192,
+    Size16384,
+    #[default]
+    Size32768,
+}
+
+impl WindowSize {
+    pub fn preferred(size: usize) -> Self {
+        match size {
+            ..=256 => Self::Size256,
+            ..=512 => Self::Size512,
+            ..=1024 => Self::Size1024,
+            ..=2048 => Self::Size2048,
+            ..=4096 => Self::Size4096,
+            ..=8192 => Self::Size8192,
+            ..=16384 => Self::Size16384,
+            _ => Self::Size32768,
+        }
+    }
+
+    #[inline]
+    pub const fn value(&self) -> usize {
+        256 << *self as usize
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum CompressionLevel {
+    Fastest = 0,
+    Fast = 3,
+    Default = 6,
+    Best = 9,
+}

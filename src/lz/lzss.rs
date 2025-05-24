@@ -5,7 +5,6 @@
 use crate::{
     EncodeError,
     lz::{cache::*, *},
-    slice_window::SliceWindow,
     *,
 };
 use core::convert::Infallible;
@@ -14,26 +13,33 @@ use core::convert::Infallible;
 pub struct Configuration {
     max_distance: usize,
     max_len: usize,
+    skip_first_literal: usize,
+    search_attempts: usize,
+    threshold_len: usize,
     cache_purge_limit: usize,
 }
 
 impl Configuration {
-    /// Maximum window size in deflate (32K, 258)
-    pub const DEFLATE: Self = Self::new(32768, 258, 0);
-
-    /// Fast and Tiny Dictionary size
-    pub const FAST: Self = Self::new(16 * 1024, LZSS::MAX_LEN, 0);
-
     /// Default Dictionary size
-    pub const DEFAULT: Self = Self::new(LZSS::MAX_DISTANCE, LZSS::MAX_LEN, 0);
+    pub const DEFAULT: Self = Self::new(LZSS::MAX_DISTANCE, LZSS::MAX_LEN, 0, 0, 0, 0);
 
-    pub const MAX: Self = Self::new(LZSS::MAX_DISTANCE, LZSS::MAX_LEN, 0);
+    // default attempts
+    pub const SEARCH_ATTEMPTS: usize = 16;
+
+    pub const THRESHOLD_LEN: usize = 8;
 
     // 16M = 128MB
     pub const CACHE_PURGE_LIMIT: usize = 16 * 1024 * 1024;
 
     #[inline]
-    pub const fn new(max_distance: usize, max_len: usize, cache_purge_limit: usize) -> Self {
+    pub const fn new(
+        max_distance: usize,
+        max_len: usize,
+        skip_first_literal: usize,
+        search_attempts: usize,
+        threshold_len: usize,
+        cache_purge_limit: usize,
+    ) -> Self {
         Self {
             max_distance: if max_distance > LZSS::MAX_DISTANCE {
                 LZSS::MAX_DISTANCE
@@ -44,6 +50,17 @@ impl Configuration {
                 LZSS::MAX_LEN
             } else {
                 max_len
+            },
+            skip_first_literal,
+            search_attempts: if search_attempts > 0 {
+                search_attempts
+            } else {
+                Self::SEARCH_ATTEMPTS
+            },
+            threshold_len: if threshold_len > 0 {
+                threshold_len
+            } else {
+                Self::THRESHOLD_LEN
             },
             cache_purge_limit: if cache_purge_limit > 0 {
                 cache_purge_limit
@@ -61,6 +78,16 @@ impl Configuration {
     #[inline]
     pub fn max_len(&self) -> usize {
         self.max_len
+    }
+
+    #[inline]
+    pub fn search_attempts(&self) -> usize {
+        self.search_attempts
+    }
+
+    #[inline]
+    pub fn threshold_len(&self) -> usize {
+        self.threshold_len
     }
 
     #[inline]
@@ -94,10 +121,6 @@ impl LZSS {
 
     pub const MAX_DISTANCE: usize = 0x10_0000;
 
-    const ATTEMPT_MATCHES: usize = 16;
-
-    const THRESHOLD_LEN_SHORT: usize = 8;
-
     const THRESHOLD_LEN_2D: usize = 8;
 
     pub fn encode<F>(
@@ -120,11 +143,14 @@ impl LZSS {
             0
         };
         let max_distance = config.max_distance() - distance_base;
+        let search_attempts = config.search_attempts();
+        let threshold_len = config.threshold_len();
 
         let mut offset3_cache = OffsetCache3::new(input, max_distance, config.cache_purge_limit());
 
         let mut buf = Vec::new();
-        let lit_buf = SliceWindow::new(input, 0);
+        let mut lit_buf = SliceWindow::new(input, 0);
+        lit_buf.expand(config.skip_first_literal);
         let mut cursor = lit_buf.len();
         offset3_cache.advance(cursor);
 
@@ -166,9 +192,9 @@ impl LZSS {
                                 cursor,
                                 config.max_len(),
                                 Self::MIN_LEN,
-                                Self::THRESHOLD_LEN_SHORT,
+                                threshold_len,
                                 offset3_cache.guaranteed_min_len(),
-                                iter.take(Self::ATTEMPT_MATCHES),
+                                iter.take(search_attempts),
                             ) {
                                 Some(mut v) => {
                                     v.distance += distance_base;
@@ -214,9 +240,9 @@ impl LZSS {
                                 cursor,
                                 config.max_len(),
                                 Self::MIN_LEN,
-                                Self::THRESHOLD_LEN_SHORT,
+                                threshold_len,
                                 offset3_cache.guaranteed_min_len(),
-                                iter.take(Self::ATTEMPT_MATCHES),
+                                iter.take(search_attempts),
                             ) {
                                 Some(v) => {
                                     matches = v;

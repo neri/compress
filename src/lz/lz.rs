@@ -6,6 +6,9 @@ pub mod cache;
 pub mod lzss;
 // pub mod sais;
 
+mod slice_window;
+pub use slice_window::*;
+
 #[inline]
 #[track_caller]
 pub fn matching_len<T>(data: &[T], current: usize, distance: usize, max_len: usize) -> usize

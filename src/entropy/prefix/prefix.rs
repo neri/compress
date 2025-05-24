@@ -42,16 +42,3 @@ impl PermutationFlavor {
         }
     }
 }
-
-#[test]
-fn compress_test() {
-    use crate::deflate::Deflate;
-    let data: &[u8] = &[
-        0x05, 0xc0, 0x31, 0x01, 0x00, 0x00, 0x00, 0x01, 0xb0, 0xac, 0x43, 0x02, 0xfd, 0x2f, 0xb9,
-        0x9a, 0x1c,
-    ];
-
-    let expected = b"abracadabra";
-    let decoded = Deflate::inflate(data, expected.len()).unwrap();
-    assert_eq!(decoded.as_slice(), expected);
-}
