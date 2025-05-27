@@ -4,7 +4,9 @@
 
 pub mod cache;
 pub mod lzss;
-// pub mod sais;
+
+#[path = "lcp/lcp.rs"]
+pub mod lcp;
 
 mod slice_window;
 pub use slice_window::*;
@@ -29,20 +31,7 @@ where
         let p = data.as_ptr().add(current);
         let q = data.as_ptr().add(current - distance);
 
-        #[allow(unused_mut)]
-        let mut len = 0;
-        // if size_of::<T>() == 1 && max_len >= 4 {
-        //     let max_len_m3 = max_len - 3;
-        //     while len < max_len_m3 {
-        //         if (p.add(len) as *const u32).read_volatile()
-        //             != (q.add(len) as *const u32).read_volatile()
-        //         {
-        //             break;
-        //         }
-        //         len += 4;
-        //     }
-        // }
-        for len in len..max_len {
+        for len in 0..max_len {
             if p.add(len).read_volatile() != q.add(len).read_volatile() {
                 return len;
             }

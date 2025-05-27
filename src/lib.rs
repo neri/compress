@@ -5,9 +5,6 @@
 
 extern crate alloc;
 
-// #[cfg(not(feature = "std"))]
-// extern crate libm;
-
 use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;

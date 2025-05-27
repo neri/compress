@@ -2,6 +2,7 @@
 //!
 //! <https://en.wikipedia.org/wiki/Lempel%E2%80%93Ziv%E2%80%93Storer%E2%80%93Szymanski>
 
+use super::lcp::LcpArray;
 use crate::{
     EncodeError,
     lz::{cache::*, *},
@@ -26,7 +27,7 @@ impl Configuration {
     // default attempts
     pub const SEARCH_ATTEMPTS: usize = 16;
 
-    pub const THRESHOLD_LEN: usize = 8;
+    pub const THRESHOLD_LEN: usize = 16;
 
     // 16M = 128MB
     pub const CACHE_PURGE_LIMIT: usize = 16 * 1024 * 1024;
@@ -286,6 +287,114 @@ impl LZSS {
         }
 
         Ok(LzssBuffer { inner: buf })
+    }
+
+    /// Encode LZSS with Longest Common Prefix (LCP) compression
+    pub fn encode_lcp<F>(input: &[u8], config: Configuration, mut f: F) -> Result<(), EncodeError>
+    where
+        F: FnMut(LZSS) -> Result<(), EncodeError>,
+    {
+        if input.is_empty() || input.len() > i32::MAX as usize {
+            return Err(EncodeError::InvalidInput);
+        }
+
+        let lcpa = LcpArray::new(input);
+
+        let mut cursor = 1 + config.skip_first_literal;
+        for &literal in input.iter().take(cursor) {
+            f(LZSS::Literal(literal))?;
+        }
+
+        while let Some(&literal) = input.get(cursor) {
+            let count = {
+                let mut matches = Matches::ZERO;
+                let min_offset = cursor.saturating_sub(config.max_distance());
+                let sa_base_index = lcpa.rank()[cursor] as usize;
+                if let Some(_) = lcpa.lcp().get(sa_base_index) {
+                    let mut lcp_limit = usize::MAX;
+                    for (&lcp, &offset) in lcpa
+                        .lcp()
+                        .iter()
+                        .zip(lcpa.sa().iter().skip(1))
+                        .skip(sa_base_index)
+                    {
+                        let lcp = lcp as usize;
+                        let offset = offset as usize;
+                        if lcp < LZSS::MIN_LEN {
+                            break;
+                        }
+                        if offset >= min_offset && offset < cursor {
+                            let len = lcp_limit.min(lcp).min(config.max_len());
+                            let distance = cursor - offset;
+                            if matches.is_zero() {
+                                matches = Matches::new(len, distance);
+                            } else if matches.len > len {
+                                break;
+                            } else if matches.len < len {
+                                matches = Matches::new(len, distance);
+                            } else if matches.len == len && matches.distance > distance {
+                                matches.distance = distance;
+                            }
+                        }
+                        lcp_limit = lcp_limit.min(lcp);
+                    }
+                }
+                if true && sa_base_index > 0 {
+                    let mut matches_d = Matches::ZERO;
+                    let lcp = &lcpa.lcp()[..sa_base_index];
+                    let sa = &lcpa.sa()[..sa_base_index];
+                    // let mut lcp_index = sa_base_index - 1;
+                    let mut lcp_limit = usize::MAX;
+                    for (&lcp, &offset) in lcp.iter().zip(sa.iter()).rev() {
+                        let lcp = lcp as usize;
+                        let offset = offset as usize;
+
+                        // println!(
+                        //     "#d lcp: {:3} {:3} {:3} {:?} {}",
+                        //     cursor,
+                        //     offset,
+                        //     lcp,
+                        //     cursor.checked_sub(offset),
+                        //     offset >= min_offset && offset < cursor,
+                        // );
+                        if lcp < LZSS::MIN_LEN {
+                            break;
+                        }
+                        if offset >= min_offset && offset < cursor {
+                            let len = lcp_limit.min(lcp).min(config.max_len());
+                            let distance = cursor - offset;
+                            if matches_d.is_zero() {
+                                matches_d = Matches::new(len, distance);
+                            } else if matches_d.len > len {
+                                break;
+                            } else if matches_d.len < len {
+                                matches_d = Matches::new(len, distance);
+                            } else if matches_d.len == len && matches_d.distance > distance {
+                                matches_d.distance = distance;
+                            }
+                        }
+                        lcp_limit = lcp_limit.min(lcp);
+                    }
+
+                    if matches_d.len > matches.len
+                        || matches_d.len == matches.len && matches_d.distance < matches.distance
+                    {
+                        matches = matches_d;
+                    }
+                }
+
+                if matches.len >= LZSS::MIN_LEN as usize {
+                    f(LZSS::Match(matches))?;
+                    matches.len
+                } else {
+                    f(LZSS::Literal(literal))?;
+                    1
+                }
+            };
+            cursor += count;
+        }
+
+        Ok(())
     }
 }
 

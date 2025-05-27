@@ -34,7 +34,9 @@ pub fn deflate(
     let options = options.unwrap_or_default();
 
     let mut buff = Vec::with_capacity(config.window_size.value());
-    LZSS::encode(input, None, config.lzss_config(), false, |lzss| {
+
+    LZSS::encode_lcp(input, config.lzss_config(), |lzss| {
+        // println!("{:?}", lzss);
         buff.push(DeflateLZIR::from_lzss(lzss));
         Ok(())
     })?;
