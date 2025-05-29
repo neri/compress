@@ -23,6 +23,19 @@ const MIN_BLOCK_SIZE: usize = 16 * 1024;
 /// Threshold for static vs dynamic encoding
 const THRESHOLD_STATIC: usize = 4096;
 
+#[inline]
+pub fn deflate_zlib(
+    input: &[u8],
+    level: CompressionLevel,
+    options: Option<OptionConfig>,
+) -> Result<Vec<u8>, EncodeError> {
+    deflate(
+        input,
+        level,
+        options.unwrap_or(OptionConfig::new()).zlib().into(),
+    )
+}
+
 pub fn deflate(
     input: &[u8],
     level: CompressionLevel,
@@ -36,7 +49,6 @@ pub fn deflate(
     let mut buff = Vec::with_capacity(config.window_size.value());
 
     LZSS::encode_lcp(input, config.lzss_config(), |lzss| {
-        // println!("{:?}", lzss);
         buff.push(DeflateLZIR::from_lzss(lzss));
         Ok(())
     })?;
@@ -364,21 +376,21 @@ impl<'a> DeflateIrBlock<'a> {
             (prefix_table_lit, prefix_table_dist)
         };
 
-        let prefix_tables = prefix_table_lit
-            .iter()
-            .chain(prefix_table_dist.iter())
-            .map(|v| v.map(|v| v.size().as_u8()).unwrap_or_default())
-            .collect::<Vec<_>>();
-        let prefix_tables = CanonicalPrefixCoder::encode_prefix_tables(
-            &[&prefix_tables],
-            PermutationFlavor::Deflate,
-        )
-        .unwrap();
-
         output.write(self.is_final()); // bfinal
         if use_static {
             output.write(VarBitValue::new(BitSize::Bit2, 0b01)); // btype
         } else {
+            let prefix_tables = prefix_table_lit
+                .iter()
+                .chain(prefix_table_dist.iter())
+                .map(|v| v.map(|v| v.size().as_u8()).unwrap_or_default())
+                .collect::<Vec<_>>();
+            let prefix_tables = CanonicalPrefixCoder::encode_prefix_tables(
+                &[&prefix_tables],
+                PermutationFlavor::Deflate,
+            )
+            .unwrap();
+
             output.write(VarBitValue::new(BitSize::Bit2, 0b10)); // btype
             output.write(VarBitValue::new(
                 BitSize::Bit5,

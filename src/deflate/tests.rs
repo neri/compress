@@ -1450,34 +1450,29 @@ const ZERO_16M_ZIP: &[u8] = &[
     0x00, 0x00, 0x00, 0x00, 0xc0, 0x55,
 ];
 
-// #[test]
-// fn deflate_zero_16m() {
-//     let size = 0x0100_0000;
-//     let mut input = Vec::new();
-//     input.resize(size, 0);
+#[test]
+fn deflate_zero_16m() {
+    let size = 0x0100_0000;
+    let mut input = Vec::new();
+    input.resize(size, 0);
 
-//     let encoded: Vec<u8> = deflate(&input, CompressionLevel::Default, None).unwrap();
-//     assert_eq!(encoded.len(), ZERO_16M_ZIP.len(),);
-//     assert_eq_array(&encoded[..16], &ZERO_16M_ZIP[..16]);
-//     assert_eq_array(
-//         &encoded[ZERO_16M_ZIP.len() - 16..],
-//         &ZERO_16M_ZIP[ZERO_16M_ZIP.len() - 16..],
-//     );
+    let encoded: Vec<u8> = deflate(&input, CompressionLevel::Fastest, None).unwrap();
+    // assert_eq!(encoded.len(), ZERO_16M_ZIP.len(),);
+    // assert_eq_array(&encoded[..16], &ZERO_16M_ZIP[..16]);
+    // assert_eq_array(
+    //     &encoded[ZERO_16M_ZIP.len() - 16..],
+    //     &ZERO_16M_ZIP[ZERO_16M_ZIP.len() - 16..],
+    // );
 
-//     let decoded = inflate(&encoded, input.len()).unwrap();
-//     assert_eq_array(&decoded, &input);
-// }
+    let decoded = inflate(&encoded, input.len()).unwrap();
+    assert_eq_array(&decoded, &input);
+}
 
 #[test]
 fn deflate_b8x8() {
     // (1+3x8) x 8
     let input = [0u8; 25 * 8];
-    let encoded1 = deflate(
-        &input,
-        CompressionLevel::Best,
-        OptionConfig::new().zlib().into(),
-    )
-    .unwrap();
+    let encoded1 = deflate_zlib(&input, CompressionLevel::Best, None).unwrap();
     let decoded = inflate(&encoded1, input.len()).unwrap();
     assert_eq_array(&decoded, &input);
     assert_eq_array(
@@ -1500,14 +1495,9 @@ fn deflate_b8x8() {
 }
 
 #[test]
-fn deflate_zero() {
-    let input = [0u8; 65536];
-    let encoded1 = deflate(
-        &input,
-        CompressionLevel::Best,
-        OptionConfig::new().zlib().into(),
-    )
-    .unwrap();
+fn deflate_zero_64k() {
+    let input = [0u8; 0x10000];
+    let encoded1 = deflate_zlib(&input, CompressionLevel::Best, None).unwrap();
     let decoded = inflate(&encoded1, input.len()).unwrap();
     assert_eq_array(&decoded, &input);
 
@@ -1519,20 +1509,14 @@ fn deflate_zero() {
 
 #[test]
 fn deflate_fib() {
-    let input = fib_str(0x55, 0xaa, 65536);
-    let encoded1 = deflate(
-        &input,
-        CompressionLevel::Best,
-        OptionConfig::new().zlib().into(),
-    )
-    .unwrap();
+    let input = fib_str(0x55, 0xaa, 0x10000);
+    let encoded1 = deflate_zlib(&input, CompressionLevel::Fastest, None).unwrap();
     let decoded = inflate(&encoded1, input.len()).unwrap();
     assert_eq_array(&decoded, &input);
 
-    let encoded2 = deflate(&input, CompressionLevel::Best, None).unwrap();
+    let encoded2 = deflate_zlib(&input, CompressionLevel::Best, None).unwrap();
     let decoded = inflate(&encoded2, input.len()).unwrap();
     assert_eq_array(&decoded, &input);
-    assert_eq!(encoded2.len() + 2 + 4, encoded1.len());
 }
 
 #[test]

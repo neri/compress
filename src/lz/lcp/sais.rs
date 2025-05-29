@@ -3,7 +3,6 @@
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 use core::mem::transmute;
-use core::ops::Deref;
 
 /// Suffix Array
 pub struct SuffixArray {
@@ -41,6 +40,7 @@ impl SuffixArray {
         };
     }
 
+    /// Suffix Array Induced Sorting (SA-IS) algorithm.
     fn sa_is(s: &[i32], sa: &mut [i32], alphabet_max: i32) {
         let alphabet_size = (alphabet_max + 2) as usize;
 
@@ -240,22 +240,6 @@ impl SuffixArray {
     #[inline]
     pub fn as_slice(&self) -> &[u32] {
         &self.inner[self.offset..]
-    }
-}
-
-impl AsRef<[u32]> for SuffixArray {
-    #[inline]
-    fn as_ref(&self) -> &[u32] {
-        self.as_slice()
-    }
-}
-
-impl Deref for SuffixArray {
-    type Target = [u32];
-
-    #[inline]
-    fn deref(&self) -> &Self::Target {
-        self.as_slice()
     }
 }
 
