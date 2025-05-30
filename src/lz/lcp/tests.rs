@@ -40,6 +40,7 @@ fn print_sa_lcp(s: &[u8], lcp: &LcpArray) {
             core::str::from_utf8_unchecked(&s)
         });
     }
+
     for (index, (&lcp, &suffix)) in lcp.lcp().iter().zip(lcp.sa().iter()).enumerate() {
         print_suffix(s, suffix);
         if index < s.len() - 1 {
@@ -53,30 +54,4 @@ fn print_sa_lcp(s: &[u8], lcp: &LcpArray) {
         println!("rank[{:3}] = {:3} {:3}", index, rank, lcp);
         assert_eq!(suffix, index as u32);
     }
-}
-
-#[allow(dead_code)]
-fn fib_str(a: u8, b: u8, limit: usize) -> Vec<u8> {
-    use core::mem::swap;
-    let mut n = 1;
-    let mut x = Vec::new();
-    let mut y: Vec<u8> = Vec::new();
-    let mut c = Vec::new();
-    while x.len() < limit {
-        match n {
-            0 => {}
-            1 => x.push(a),
-            2 => y.push(b),
-            _ => {
-                c.clear();
-                c.extend_from_slice(&x);
-                c.extend_from_slice(&y);
-                swap(&mut x, &mut y);
-                swap(&mut x, &mut c);
-            }
-        }
-        n += 1;
-    }
-    x.truncate(limit);
-    x
 }

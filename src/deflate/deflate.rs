@@ -29,11 +29,7 @@ pub fn deflate_zlib(
     level: CompressionLevel,
     options: Option<OptionConfig>,
 ) -> Result<Vec<u8>, EncodeError> {
-    deflate(
-        input,
-        level,
-        options.unwrap_or(OptionConfig::new()).zlib().into(),
-    )
+    deflate(input, level, options.unwrap_or_default().zlib().into())
 }
 
 pub fn deflate(
@@ -63,7 +59,7 @@ pub fn deflate(
     let mut output = BitStreamWriter::new();
     if options.is_zlib {
         let cmf = ((config.window_size.value().trailing_zeros() as u8 - 8) << 4) | 0x08;
-        let mut flg = config.zlib_flevel() << 6;
+        let mut flg = config.level.zlib_flevel() << 6;
         let fcheck = 31 - (cmf as u16 * 256 + flg as u16) % 31;
         flg |= fcheck as u8;
         output.push_byte(cmf);
@@ -71,7 +67,7 @@ pub fn deflate(
     }
 
     for block in blocks {
-        if config.level > CompressionLevel::Fastest && block.estimated_size() < THRESHOLD_STATIC {
+        if !config.level.is_fast_method() && block.estimated_size() < THRESHOLD_STATIC {
             let mut ref_static = BitStreamWriter::new();
             block.encode(&mut ref_static, true);
             let mut ref_dynamic = BitStreamWriter::new();
@@ -110,7 +106,6 @@ impl DeflateLZIR {
     #[allow(unused)]
     pub const END_OF_BLOCK: Self = Self(256);
 
-    #[track_caller]
     pub fn from_lzss(lzss: LZSS) -> Self {
         match lzss {
             LZSS::Literal(literal) => Self::with_literal(literal),
@@ -124,7 +119,6 @@ impl DeflateLZIR {
     }
 
     #[inline]
-    #[track_caller]
     pub fn with_match(matches: Matches) -> Self {
         let len = LenType::new(matches.len as u32).unwrap();
         let dist = DistanceType::new(matches.distance as u32).unwrap();
@@ -435,33 +429,14 @@ impl Configuration {
         window_size: WindowSize::Size32768,
     };
 
-    #[inline]
-    pub const fn zlib_flevel(&self) -> u8 {
-        match self.level {
-            CompressionLevel::Fastest => 0,
-            CompressionLevel::Fast => 1,
-            CompressionLevel::Default => 2,
-            CompressionLevel::Best => 3,
-        }
-    }
-
     pub fn lzss_config(&self) -> lzss::Configuration {
         let window_size = self.window_size.value();
         let max_len = window_size.min(258);
         let skip_first_literal = 1;
-        match self.level {
-            CompressionLevel::Fastest => {
-                lzss::Configuration::new(window_size, max_len, skip_first_literal, 1, 3, 0)
-            }
-            CompressionLevel::Fast => {
-                lzss::Configuration::new(window_size, max_len, skip_first_literal, 0, 0, 0)
-            }
-            CompressionLevel::Default => {
-                lzss::Configuration::new(window_size, max_len, skip_first_literal, 0, 0, 0)
-            }
-            CompressionLevel::Best => {
-                lzss::Configuration::new(window_size, max_len, skip_first_literal, 0, 0, 0)
-            }
+        if self.level.is_fast_method() {
+            lzss::Configuration::new(window_size, max_len, skip_first_literal, 1, 3, 0)
+        } else {
+            lzss::Configuration::new(window_size, max_len, skip_first_literal, 0, 0, 0)
         }
     }
 }

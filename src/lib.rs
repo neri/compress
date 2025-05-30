@@ -36,3 +36,30 @@ pub enum EncodeError {
     OutOfMemory,
     EntropyError,
 }
+
+/// A Fibonacci word generator for testing purposes.
+#[cfg(test)]
+pub(crate) fn fib_str(a: u8, b: u8, limit: usize) -> Vec<u8> {
+    use core::mem::swap;
+    let mut n = 1;
+    let mut x = Vec::new();
+    let mut y: Vec<u8> = Vec::new();
+    let mut c = Vec::new();
+    while x.len() < limit {
+        match n {
+            0 => {}
+            1 => x.push(a),
+            2 => y.push(b),
+            _ => {
+                c.clear();
+                c.extend_from_slice(&x);
+                c.extend_from_slice(&y);
+                swap(&mut x, &mut y);
+                swap(&mut x, &mut c);
+            }
+        }
+        n += 1;
+    }
+    x.truncate(limit);
+    x
+}

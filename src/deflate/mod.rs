@@ -213,7 +213,8 @@ pub enum WindowSize {
 }
 
 impl WindowSize {
-    pub fn preferred(size: usize) -> Self {
+    #[inline]
+    pub const fn preferred(size: usize) -> Self {
         match size {
             ..=256 => Self::Size256,
             ..=512 => Self::Size512,
@@ -232,10 +233,37 @@ impl WindowSize {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub enum CompressionLevel {
+    /// Compress as fast as possible
     Fastest = 0,
-    Fast = 3,
+    /// Currently, same as `Fastest`
+    Fast = 1,
+    /// Currently, same as `Best`
+    #[default]
     Default = 6,
+    /// Compress as much as possible
     Best = 9,
+}
+
+impl CompressionLevel {
+    #[inline]
+    pub const fn is_fast_method(&self) -> bool {
+        matches!(self, Self::Fastest | Self::Fast)
+    }
+
+    #[inline]
+    pub const fn is_best_method(&self) -> bool {
+        matches!(self, Self::Best | Self::Default)
+    }
+
+    #[inline]
+    pub const fn zlib_flevel(&self) -> u8 {
+        match self {
+            CompressionLevel::Fastest => 0,
+            CompressionLevel::Fast => 1,
+            CompressionLevel::Default => 2,
+            CompressionLevel::Best => 3,
+        }
+    }
 }

@@ -144,7 +144,6 @@ impl LZSS {
 
         let guaranteed_min_len = offset3_cache.guaranteed_min_len();
         assert_eq!(guaranteed_min_len, 3);
-        let max_len = config.max_len() - guaranteed_min_len;
 
         while let Some(&literal) = input.get(cursor) {
             let count = {
@@ -152,15 +151,41 @@ impl LZSS {
 
                 if let Some(mut iter) = offset3_cache.matches() {
                     if let Some(distance) = iter.next() {
-                        let len =
-                            lz::matching_len(input, cursor + guaranteed_min_len, distance, max_len);
+                        let len = lz::matching_len(
+                            input,
+                            cursor + guaranteed_min_len,
+                            distance,
+                            usize::MAX,
+                        );
                         matches = Matches::new(len + guaranteed_min_len, distance);
                     }
                 }
 
                 if matches.len >= LZSS::MIN_LEN as usize {
-                    f(LZSS::Match(matches))?;
-                    matches.len
+                    if matches.len < config.max_len() {
+                        f(LZSS::Match(matches))?;
+                        matches.len
+                    } else {
+                        let mut total_len = 0;
+                        let mut left = matches.len;
+                        loop {
+                            if left > config.max_len() {
+                                f(LZSS::Match(Matches::new(
+                                    config.max_len(),
+                                    matches.distance,
+                                )))?;
+                                left -= config.max_len();
+                                total_len += config.max_len();
+                            } else if left >= LZSS::MIN_LEN {
+                                f(LZSS::Match(Matches::new(left, matches.distance)))?;
+                                total_len += left;
+                                break;
+                            } else {
+                                break;
+                            }
+                        }
+                        total_len
+                    }
                 } else {
                     f(LZSS::Literal(literal))?;
                     1
@@ -374,7 +399,7 @@ impl LZSS {
                                 break;
                             }
                             if offset >= min_offset && offset < cursor {
-                                let len = lcp_limit.min(lcp).min(config.max_len());
+                                let len = lcp_limit.min(lcp);
                                 let distance = cursor - offset;
                                 if matches.is_zero() {
                                     matches = Matches::new(len, distance);
@@ -401,7 +426,7 @@ impl LZSS {
                                 break;
                             }
                             if offset >= min_offset && offset < cursor {
-                                let len = lcp_limit.min(lcp).min(config.max_len());
+                                let len = lcp_limit.min(lcp);
                                 let distance = cursor - offset;
                                 if matches2.is_zero() {
                                     matches2 = Matches::new(len, distance);
@@ -424,8 +449,30 @@ impl LZSS {
                     }
 
                     if matches.len >= LZSS::MIN_LEN as usize {
-                        f(LZSS::Match(matches))?;
-                        matches.len
+                        if matches.len < config.max_len() {
+                            f(LZSS::Match(matches))?;
+                            matches.len
+                        } else {
+                            let mut total_len = 0;
+                            let mut left = matches.len;
+                            loop {
+                                if left > config.max_len() {
+                                    f(LZSS::Match(Matches::new(
+                                        config.max_len(),
+                                        matches.distance,
+                                    )))?;
+                                    left -= config.max_len();
+                                    total_len += config.max_len();
+                                } else if left >= LZSS::MIN_LEN {
+                                    f(LZSS::Match(Matches::new(left, matches.distance)))?;
+                                    total_len += left;
+                                    break;
+                                } else {
+                                    break;
+                                }
+                            }
+                            total_len
+                        }
                     } else {
                         f(LZSS::Literal(literal))?;
                         1
