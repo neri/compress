@@ -5,29 +5,27 @@
 pub mod cache;
 pub mod lzss;
 
-#[path = "lcp/lcp.rs"]
-pub mod lcp;
+#[path = "match_finder/match_finder.rs"]
+pub mod match_finder;
 
 mod slice_window;
 pub use slice_window::*;
 
 #[inline]
 #[track_caller]
-pub fn matching_len<T>(data: &[T], current: usize, distance: usize, max_len: usize) -> usize
+pub fn matching_len<T>(data: &[T], current: usize, distance: usize) -> usize
 where
     T: Sized + Copy + PartialEq,
 {
-    if true {
-        assert!(
-            data.len() >= current && distance != 0 && current >= distance,
-            "INVALID MATCHES: LEN {} CURRENT {} DISTANCE {}",
-            data.len(),
-            current,
-            distance
-        );
-    }
+    debug_assert!(
+        data.len() >= current && distance != 0 && current >= distance,
+        "INVALID MATCHES: LEN {} CURRENT {} DISTANCE {}",
+        data.len(),
+        current,
+        distance
+    );
     unsafe {
-        let max_len = (data.len() - current).min(max_len);
+        let max_len = data.len() - current;
         let p = data.as_ptr().add(current);
         let q = data.as_ptr().add(current - distance);
 
@@ -44,21 +42,19 @@ where
 pub fn find_distance_matches<T: Sized + Copy + PartialEq>(
     input: &[T],
     cursor: usize,
-    max_len: usize,
     threshold_min: usize,
     threshold_max: usize,
     guaranteed_min_len: usize,
     dist_iter: impl Iterator<Item = usize>,
-) -> Option<Matches> {
+) -> Option<Match> {
     let threshold_min_len = threshold_min.saturating_sub(guaranteed_min_len);
     let threshold_max_len = threshold_max.saturating_sub(guaranteed_min_len);
     let cursor = cursor + guaranteed_min_len;
-    let max_len = max_len.saturating_sub(guaranteed_min_len);
-    let mut matches = Matches::ZERO;
+    let mut matches = Match::ZERO;
     for distance in dist_iter {
-        let len = matching_len(input, cursor, distance, max_len) + guaranteed_min_len;
+        let len = matching_len(input, cursor, distance) + guaranteed_min_len;
         if matches.len < len {
-            matches = Matches::new(len, distance);
+            matches = Match::new(len, distance);
             if matches.len >= threshold_max_len {
                 break;
             }
@@ -69,12 +65,12 @@ pub fn find_distance_matches<T: Sized + Copy + PartialEq>(
 
 /// Matching distance and length
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Matches {
+pub struct Match {
     pub len: usize,
     pub distance: usize,
 }
 
-impl Matches {
+impl Match {
     pub const ZERO: Self = Self::new(0, 0);
 
     #[inline]
@@ -88,7 +84,7 @@ impl Matches {
     }
 }
 
-impl Default for Matches {
+impl Default for Match {
     #[inline]
     fn default() -> Self {
         Self::ZERO

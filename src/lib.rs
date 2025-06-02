@@ -63,3 +63,14 @@ pub(crate) fn fib_str(a: u8, b: u8, limit: usize) -> Vec<u8> {
     x.truncate(limit);
     x
 }
+
+#[cfg(test)]
+pub(crate) fn random_bytes(a: u8, b: u8, limit: usize) -> Vec<u8> {
+    use rand::RngCore;
+    let mut rng = rand::rng();
+    let mut v = Vec::with_capacity(limit);
+    for _ in 0..limit {
+        v.push(if rng.next_u32() % 2 == 0 { a } else { b })
+    }
+    v
+}

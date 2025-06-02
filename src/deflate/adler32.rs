@@ -1,12 +1,12 @@
 //! Adler-32 checksum implementation
+//!
+//! References:
+//!
+//! * <https://www.ietf.org/rfc/rfc1950.txt>
+//! * <https://en.wikipedia.org/wiki/Adler-32>
+//!
 
 /// Adler-32 checksum implementation
-///
-/// References:
-///
-/// * <https://www.ietf.org/rfc/rfc1950.txt>
-/// * <https://en.wikipedia.org/wiki/Adler-32>
-///
 pub fn checksum(data: &[u8]) -> u32 {
     let mut s1 = 1u32;
     let mut s2 = 0u32;

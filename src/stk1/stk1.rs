@@ -21,7 +21,7 @@
 //! Related Documents: <http://osask.net/w/196.html> (But different from known final specifications)
 
 use crate::lz::{
-    self, Matches, SliceWindow,
+    self, Match, SliceWindow,
     cache::{OffsetCache, OffsetCache3},
 };
 use crate::*;
@@ -124,14 +124,13 @@ impl Stk1 {
 
         while let Some(_) = input.get(cursor) {
             let count = {
-                let mut matches = Matches::ZERO;
+                let mut matches = Match::ZERO;
 
                 // Find a long-distance match
                 if let Some(iter) = offset_cache.matches() {
                     match lz::find_distance_matches(
                         input,
                         cursor,
-                        config.max_len(),
                         LZ_MIN_MID_LEN,
                         THRESHOLD_LEN1,
                         offset_cache.guaranteed_min_len(),
@@ -145,9 +144,9 @@ impl Stk1 {
                 // Find a short-distance match
                 if matches.is_zero() {
                     for distance in 1..=cursor.min(LZ_SHORT_MAX_DIST) {
-                        let len = lz::matching_len(input, cursor, distance, config.max_len());
+                        let len = lz::matching_len(input, cursor, distance);
                         if len >= LZ_SHORT_MIN_LEN && matches.len < len {
-                            matches = Matches { len, distance };
+                            matches = Match { len, distance };
                         }
                     }
                 }
@@ -161,6 +160,7 @@ impl Stk1 {
                     }
                     1
                 } else {
+                    matches.len = matches.len.min(config.max_len());
                     lz_buf.push(matches);
                     matches.len
                 }
@@ -176,7 +176,7 @@ impl Stk1 {
     fn _flush(
         output: &mut Vec<u8>,
         lit_buf: SliceWindow<u8>,
-        lz_buf: &mut Vec<Matches>,
+        lz_buf: &mut Vec<Match>,
     ) -> Result<(), EncodeError> {
         // Literals of length 0 are impossible.
         assert!(lit_buf.len() > 0);

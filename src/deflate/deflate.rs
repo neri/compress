@@ -7,7 +7,7 @@ use crate::{
         prefix::{CanonicalPrefixCoder, CanonicalPrefixDecoder, PermutationFlavor},
     },
     lz::{
-        Matches,
+        Match,
         lzss::{self, LZSS},
     },
     num::{
@@ -119,7 +119,7 @@ impl DeflateLZIR {
     }
 
     #[inline]
-    pub fn with_match(matches: Matches) -> Self {
+    pub fn with_match(matches: Match) -> Self {
         let len = LenType::new(matches.len as u32).unwrap();
         let dist = DistanceType::new(matches.distance as u32).unwrap();
         let lit_len = len.leading() as u32 + 257;

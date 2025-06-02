@@ -1,4 +1,5 @@
 //! Canonical Prefix Decoder
+
 use super::*;
 use crate::num::bits::{BitSize, BitStreamReader, VarBitValue};
 use crate::*;
@@ -133,29 +134,28 @@ impl CanonicalPrefixDecoder {
     }
 
     // #[inline(never)]
+    #[inline]
     pub fn decode(&self, reader: &mut BitStreamReader) -> Result<u32, DecodeError> {
         if let Some(key) = reader.peek_bits(self.peek_bits) {
-            let item = self
+            let entry = self
                 .lookup_table
                 .get(key as usize)
                 .ok_or(DecodeError::InvalidData)?;
-            if let Some(bits) = item.advance_bits() {
-                let symbol1 = item.symbol1();
+            if let Some(bits) = entry.advance_bits() {
+                let symbol1 = entry.symbol1();
                 reader.advance(bits);
                 return Ok(symbol1);
             }
         }
-
+        self._decode_failthrough(reader)
+    }
+    fn _decode_failthrough(&self, reader: &mut BitStreamReader) -> Result<u32, DecodeError> {
         let mut node = self.root_node();
         loop {
             let bit = reader.read_bool().ok_or(DecodeError::UnexpectedEof)?;
             match node.next(bit) {
-                ChildNode::Leaf(value) => {
-                    return Ok(value);
-                }
-                ChildNode::Node(node_next) => {
-                    node = node_next;
-                }
+                ChildNode::Leaf(value) => return Ok(value),
+                ChildNode::Node(child) => node = child,
             }
         }
     }
@@ -363,9 +363,9 @@ pub enum ChildNode<'a> {
 /// A lookup table entry for the canonical prefix decoder.
 ///
 /// format:
-/// * bit0-8 symbol1
-/// * bit9-11 unused
-/// * bit12-15 bit lengths to advance (1-15)
+/// * bit0-3 bit lengths to advance (1-15)
+/// * bit4-11 symbol1
+/// * bit12-15 mbz
 ///
 #[repr(transparent)]
 #[derive(Debug, Clone, Copy)]

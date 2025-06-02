@@ -103,7 +103,7 @@ impl SuffixArray {
                     lms_substrs.insert(pair.1 as u32, &s[(pair.1 as usize)..=end]);
                 }
                 None => {
-                    sa[0] = pair.1 as i32;
+                    sa[0] = pair.1 as i32; // sentinel
                 }
             }
         }
@@ -121,7 +121,7 @@ impl SuffixArray {
         }
 
         let mut name = 0;
-        let mut names = Vec::new();
+        let mut names = Vec::with_capacity(lmssa.len());
         names.push(0);
         for (lhs, rhs) in windowed2(&lmssa) {
             let lhs = lms_substrs.get(&(*lhs as u32));
@@ -133,6 +133,7 @@ impl SuffixArray {
         }
 
         if (name as usize) < names.len() - 1 {
+            // TODO: optimize this area
             let mut lms_pairs = lmssa
                 .iter()
                 .zip(names.iter())
@@ -167,7 +168,7 @@ impl SuffixArray {
                     *bucket -= 1;
                 }
                 None => {
-                    sa[0] = lms;
+                    sa[0] = lms; // sentinel
                 }
             }
         }
@@ -226,6 +227,7 @@ impl SuffixArray {
         }
     }
 
+    #[cfg(test)]
     /// naive implementation for testing purposes
     pub fn naive(input: &[u8]) -> Self {
         let mut sa = (0..input.len() as u32).collect::<Vec<_>>();

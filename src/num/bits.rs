@@ -43,17 +43,17 @@ impl BitSize {
     pub const MAX: Self = Self::Bit24;
 
     #[inline]
-    pub fn as_usize(&self) -> usize {
+    pub const fn as_usize(&self) -> usize {
         *self as usize
     }
 
     #[inline]
-    pub fn as_u8(&self) -> u8 {
+    pub const fn as_u8(&self) -> u8 {
         *self as u8
     }
 
     #[inline]
-    pub fn as_u32(&self) -> u32 {
+    pub const fn as_u32(&self) -> u32 {
         *self as u32
     }
 
@@ -405,9 +405,14 @@ impl Write<&[VarBitValue]> for BitStreamWriter {
     }
 }
 
+#[cfg(target_pointer_width = "64")]
+type AccRepr = u64;
+#[cfg(target_pointer_width = "32")]
+type AccRepr = u32;
+
 #[repr(C)]
 pub struct BitStreamReader<'a> {
-    acc: u32,
+    acc: AccRepr,
     left: usize,
     slice: &'a [u8],
 }
@@ -445,7 +450,7 @@ impl<'a> BitStreamReader<'a> {
                 bits_left -= 8;
             }
             if bits_left > 0 {
-                self.acc = self._iter_next()? as u32 >> bits_left;
+                self.acc = self._iter_next()? as AccRepr >> bits_left;
                 self.left = 8 - bits_left;
             } else {
                 self.acc = 0;
@@ -467,7 +472,7 @@ impl<'a> BitStreamReader<'a> {
     // #[inline(never)]
     pub fn read_bool(&mut self) -> Option<bool> {
         if self.left == 0 {
-            self.acc = self._iter_next()? as u32;
+            self.acc = self._iter_next()? as AccRepr;
             self.left = 8;
         }
         let result = self.acc & 1 != 0;
@@ -491,17 +496,17 @@ impl<'a> BitStreamReader<'a> {
     // #[inline(never)]
     pub fn read_bits(&mut self, bits: BitSize) -> Option<u32> {
         if bits.as_usize() <= self.left {
-            let result = self.acc & bits.mask();
+            let result = self.acc as u32 & bits.mask();
             unsafe {
                 self._advance(bits.as_usize());
             }
             return Some(result);
         } else {
             while bits.as_usize() > self.left {
-                self.acc |= (self._iter_next()? as u32) << self.left;
+                self.acc |= (self._iter_next()? as AccRepr) << self.left;
                 self.left += 8;
             }
-            let result = self.acc & bits.mask();
+            let result = self.acc as u32 & bits.mask();
             unsafe {
                 self._advance(bits.as_usize());
             }
@@ -510,18 +515,28 @@ impl<'a> BitStreamReader<'a> {
     }
 
     // #[inline(never)]
+    #[inline]
     pub fn peek_bits(&mut self, bits: BitSize) -> Option<u32> {
         if bits.as_usize() <= self.left {
-            Some(self.acc & bits.mask())
+            Some(self.acc as u32 & bits.mask())
         } else {
-            while bits.as_usize() > self.left {
-                let (data, next) = self.slice.split_first()?;
-                self.acc |= (*data as u32) << self.left;
-                self.left += 8;
-                self.slice = next;
-            }
-            Some(self.acc & bits.mask())
+            self._peek_bits2(bits)
         }
+    }
+
+    /// # Safety
+    ///
+    /// `bits` must be less than or equal to 24
+    fn _peek_bits2(&mut self, bits: BitSize) -> Option<u32> {
+        while self.left <= size_of::<AccRepr>() * 8 - 8 {
+            let Some((data, next)) = self.slice.split_first() else {
+                return (bits.as_usize() <= self.left).then(|| self.acc as u32 & bits.mask());
+            };
+            self.acc |= (*data as AccRepr) << self.left;
+            self.left += 8;
+            self.slice = next;
+        }
+        return Some(self.acc as u32 & bits.mask());
     }
 
     #[inline]

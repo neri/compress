@@ -1,8 +1,9 @@
 //! Lempel–Ziv–Storer–Szymanski style compression code
 //!
 //! <https://en.wikipedia.org/wiki/Lempel%E2%80%93Ziv%E2%80%93Storer%E2%80%93Szymanski>
+//!
 
-use super::lcp::LcpArray;
+use super::match_finder::MatchFinder;
 use crate::{
     EncodeError,
     lz::{cache::*, *},
@@ -107,7 +108,7 @@ impl Default for Configuration {
 #[derive(Debug, Clone, Copy)]
 pub enum LZSS {
     Literal(u8),
-    Match(Matches),
+    Match(Match),
 }
 
 pub struct LzssBuffer {
@@ -144,48 +145,36 @@ impl LZSS {
 
         let guaranteed_min_len = offset3_cache.guaranteed_min_len();
         assert_eq!(guaranteed_min_len, 3);
+        let max_len = config.max_len();
 
         while let Some(&literal) = input.get(cursor) {
             let count = {
-                let mut matches = Matches::ZERO;
+                let mut matches = Match::ZERO;
 
                 if let Some(mut iter) = offset3_cache.matches() {
                     if let Some(distance) = iter.next() {
-                        let len = lz::matching_len(
-                            input,
-                            cursor + guaranteed_min_len,
-                            distance,
-                            usize::MAX,
-                        );
-                        matches = Matches::new(len + guaranteed_min_len, distance);
+                        let len = lz::matching_len(input, cursor + guaranteed_min_len, distance);
+                        matches = Match::new(len + guaranteed_min_len, distance);
                     }
                 }
 
                 if matches.len >= LZSS::MIN_LEN as usize {
-                    if matches.len < config.max_len() {
-                        f(LZSS::Match(matches))?;
-                        matches.len
-                    } else {
-                        let mut total_len = 0;
-                        let mut left = matches.len;
-                        loop {
-                            if left > config.max_len() {
-                                f(LZSS::Match(Matches::new(
-                                    config.max_len(),
-                                    matches.distance,
-                                )))?;
-                                left -= config.max_len();
-                                total_len += config.max_len();
-                            } else if left >= LZSS::MIN_LEN {
-                                f(LZSS::Match(Matches::new(left, matches.distance)))?;
-                                total_len += left;
-                                break;
-                            } else {
-                                break;
-                            }
+                    let mut total_len = 0;
+                    let mut left = matches.len;
+                    loop {
+                        if left > max_len {
+                            f(LZSS::Match(Match::new(max_len, matches.distance)))?;
+                            left -= max_len;
+                            total_len += max_len;
+                        } else if left >= LZSS::MIN_LEN {
+                            f(LZSS::Match(Match::new(left, matches.distance)))?;
+                            total_len += left;
+                            break;
+                        } else {
+                            break;
                         }
-                        total_len
                     }
+                    total_len
                 } else {
                     f(LZSS::Literal(literal))?;
                     1
@@ -198,7 +187,114 @@ impl LZSS {
         Ok(())
     }
 
-    pub fn encode<F>(
+    /// Encode LZSS with Longest Common Prefix (LCP) compression
+    pub fn encode_lcp<F>(input: &[u8], config: Configuration, mut f: F) -> Result<(), EncodeError>
+    where
+        F: FnMut(LZSS) -> Result<(), EncodeError>,
+    {
+        if config.search_attempts() == 1 {
+            return Self::encode_fast(input, config, f);
+        } else {
+            if input.is_empty() || input.len() > i32::MAX as usize {
+                return Err(EncodeError::InvalidInput);
+            }
+
+            let finder = MatchFinder::new(input);
+            let mut current = 1 + config.skip_first_literal;
+            for &literal in input.iter().take(current) {
+                f(LZSS::Literal(literal))?;
+            }
+            while let Some(&literal) = input.get(current) {
+                let count = {
+                    let mut matches = Match::ZERO;
+                    let min_offset = current.saturating_sub(config.max_distance());
+                    let sa_base_index = finder.rev_sa()[current] as usize;
+                    if let Some(_) = finder.lcp().get(sa_base_index) {
+                        let mut lcp_limit = usize::MAX;
+                        for (&lcp, &offset) in finder
+                            .lcp()
+                            .iter()
+                            .zip(finder.sa().iter().skip(1))
+                            .skip(sa_base_index)
+                        {
+                            let lcp = lcp as usize;
+                            let offset = offset as usize;
+                            if lcp < LZSS::MIN_LEN {
+                                break;
+                            }
+                            if offset >= min_offset && offset < current {
+                                let len = lcp_limit.min(lcp);
+                                let distance = current - offset;
+                                if matches.is_zero() {
+                                    matches = Match::new(len, distance);
+                                } else if matches.len > len {
+                                    break;
+                                } else if matches.len < len {
+                                    matches = Match::new(len, distance);
+                                } else if matches.len == len && matches.distance > distance {
+                                    matches.distance = distance;
+                                }
+                            }
+                            lcp_limit = lcp_limit.min(lcp);
+                        }
+                    }
+                    if sa_base_index > 0 {
+                        let lcp = &finder.lcp()[..sa_base_index];
+                        let sa = &finder.sa()[..sa_base_index];
+                        let mut lcp_limit = usize::MAX;
+                        for (&lcp, &offset) in lcp.iter().zip(sa.iter()).rev() {
+                            let lcp = lcp as usize;
+                            let offset = offset as usize;
+                            if lcp < LZSS::MIN_LEN {
+                                break;
+                            }
+                            if offset >= min_offset && offset < current {
+                                let len = lcp_limit.min(lcp);
+                                let distance = current - offset;
+                                if matches.is_zero() {
+                                    matches = Match::new(len, distance);
+                                } else if matches.len > len {
+                                    break;
+                                } else if matches.len < len {
+                                    matches = Match::new(len, distance);
+                                } else if matches.len == len && matches.distance > distance {
+                                    matches.distance = distance;
+                                }
+                            }
+                            lcp_limit = lcp_limit.min(lcp);
+                        }
+                    }
+
+                    if matches.len >= LZSS::MIN_LEN as usize {
+                        let mut total_len = 0;
+                        let mut left = matches.len;
+                        loop {
+                            if left > config.max_len() {
+                                f(LZSS::Match(Match::new(config.max_len(), matches.distance)))?;
+                                left -= config.max_len();
+                                total_len += config.max_len();
+                            } else if left >= LZSS::MIN_LEN {
+                                f(LZSS::Match(Match::new(left, matches.distance)))?;
+                                total_len += left;
+                                break;
+                            } else {
+                                break;
+                            }
+                        }
+                        total_len
+                    } else {
+                        f(LZSS::Literal(literal))?;
+                        1
+                    }
+                };
+                current += count;
+            }
+        }
+        Ok(())
+    }
+
+    /// Encode LZSS
+    pub fn encode_old<F>(
         input: &[u8],
         distance_mapping: Option<&[usize]>,
         config: Configuration,
@@ -244,16 +340,16 @@ impl LZSS {
         if let Some(distance_mapping) = distance_mapping {
             while let Some(_) = input.get(cursor) {
                 let count = {
-                    let mut matches = Matches::ZERO;
+                    let mut matches = Match::ZERO;
 
                     // Find 2d distance matches
                     for (dist_code, distance) in distance_mapping.iter().enumerate() {
                         if *distance > cursor {
                             continue;
                         }
-                        let len = lz::matching_len(input, cursor, *distance, config.max_len());
+                        let len = lz::matching_len(input, cursor, *distance);
                         if matches.len < len {
-                            matches = Matches::new(len, dist_code + 1);
+                            matches = Match::new(len, dist_code + 1);
                             if matches.len >= Self::THRESHOLD_LEN_2D {
                                 break;
                             }
@@ -265,7 +361,6 @@ impl LZSS {
                             match lz::find_distance_matches(
                                 input,
                                 cursor,
-                                config.max_len(),
                                 Self::MIN_LEN,
                                 threshold_len,
                                 offset3_cache.guaranteed_min_len(),
@@ -285,6 +380,8 @@ impl LZSS {
                             flush_lit(lit_buf, &mut buf, &mut f)?;
                         }
                         lit_buf = None;
+
+                        matches.len = matches.len.min(config.max_len());
                         f(LZSS::Match(matches))?;
                         if needs_buffer {
                             buf.push(LZSSIR::with_match(matches));
@@ -306,14 +403,13 @@ impl LZSS {
         } else {
             while let Some(_) = input.get(cursor) {
                 let count = {
-                    let mut matches = Matches::ZERO;
+                    let mut matches = Match::ZERO;
 
                     if matches.is_zero() {
                         if let Some(iter) = offset3_cache.matches() {
                             match lz::find_distance_matches(
                                 input,
                                 cursor,
-                                config.max_len(),
                                 Self::MIN_LEN,
                                 threshold_len,
                                 offset3_cache.guaranteed_min_len(),
@@ -332,6 +428,8 @@ impl LZSS {
                             flush_lit(lit_buf, &mut buf, &mut f)?;
                         }
                         lit_buf = None;
+
+                        matches.len = matches.len.min(config.max_len());
                         f(LZSS::Match(matches))?;
                         if needs_buffer {
                             buf.push(LZSSIR::with_match(matches));
@@ -361,127 +459,6 @@ impl LZSS {
         }
 
         Ok(LzssBuffer { inner: buf })
-    }
-
-    /// Encode LZSS with Longest Common Prefix (LCP) compression
-    pub fn encode_lcp<F>(input: &[u8], config: Configuration, mut f: F) -> Result<(), EncodeError>
-    where
-        F: FnMut(LZSS) -> Result<(), EncodeError>,
-    {
-        if config.search_attempts() == 1 {
-            return Self::encode_fast(input, config, f);
-        } else {
-            if input.is_empty() || input.len() > i32::MAX as usize {
-                return Err(EncodeError::InvalidInput);
-            }
-
-            let lcpa = LcpArray::new(input);
-            let mut cursor = 1 + config.skip_first_literal;
-            for &literal in input.iter().take(cursor) {
-                f(LZSS::Literal(literal))?;
-            }
-            while let Some(&literal) = input.get(cursor) {
-                let count = {
-                    let mut matches = Matches::ZERO;
-                    let min_offset = cursor.saturating_sub(config.max_distance());
-                    let sa_base_index = lcpa.rank()[cursor] as usize;
-                    if let Some(_) = lcpa.lcp().get(sa_base_index) {
-                        let mut lcp_limit = usize::MAX;
-                        for (&lcp, &offset) in lcpa
-                            .lcp()
-                            .iter()
-                            .zip(lcpa.sa().iter().skip(1))
-                            .skip(sa_base_index)
-                        {
-                            let lcp = lcp as usize;
-                            let offset = offset as usize;
-                            if lcp < LZSS::MIN_LEN {
-                                break;
-                            }
-                            if offset >= min_offset && offset < cursor {
-                                let len = lcp_limit.min(lcp);
-                                let distance = cursor - offset;
-                                if matches.is_zero() {
-                                    matches = Matches::new(len, distance);
-                                } else if matches.len > len {
-                                    break;
-                                } else if matches.len < len {
-                                    matches = Matches::new(len, distance);
-                                } else if matches.len == len && matches.distance > distance {
-                                    matches.distance = distance;
-                                }
-                            }
-                            lcp_limit = lcp_limit.min(lcp);
-                        }
-                    }
-                    if sa_base_index > 0 {
-                        let mut matches2 = Matches::ZERO;
-                        let lcp = &lcpa.lcp()[..sa_base_index];
-                        let sa = &lcpa.sa()[..sa_base_index];
-                        let mut lcp_limit = usize::MAX;
-                        for (&lcp, &offset) in lcp.iter().zip(sa.iter()).rev() {
-                            let lcp = lcp as usize;
-                            let offset = offset as usize;
-                            if lcp < LZSS::MIN_LEN {
-                                break;
-                            }
-                            if offset >= min_offset && offset < cursor {
-                                let len = lcp_limit.min(lcp);
-                                let distance = cursor - offset;
-                                if matches2.is_zero() {
-                                    matches2 = Matches::new(len, distance);
-                                } else if matches2.len > len {
-                                    break;
-                                } else if matches2.len < len {
-                                    matches2 = Matches::new(len, distance);
-                                } else if matches2.len == len && matches2.distance > distance {
-                                    matches2.distance = distance;
-                                }
-                            }
-                            lcp_limit = lcp_limit.min(lcp);
-                        }
-
-                        if matches2.len > matches.len
-                            || matches2.len == matches.len && matches2.distance < matches.distance
-                        {
-                            matches = matches2;
-                        }
-                    }
-
-                    if matches.len >= LZSS::MIN_LEN as usize {
-                        if matches.len < config.max_len() {
-                            f(LZSS::Match(matches))?;
-                            matches.len
-                        } else {
-                            let mut total_len = 0;
-                            let mut left = matches.len;
-                            loop {
-                                if left > config.max_len() {
-                                    f(LZSS::Match(Matches::new(
-                                        config.max_len(),
-                                        matches.distance,
-                                    )))?;
-                                    left -= config.max_len();
-                                    total_len += config.max_len();
-                                } else if left >= LZSS::MIN_LEN {
-                                    f(LZSS::Match(Matches::new(left, matches.distance)))?;
-                                    total_len += left;
-                                    break;
-                                } else {
-                                    break;
-                                }
-                            }
-                            total_len
-                        }
-                    } else {
-                        f(LZSS::Literal(literal))?;
-                        1
-                    }
-                };
-                cursor += count;
-            }
-        }
-        Ok(())
     }
 }
 
@@ -532,7 +509,7 @@ impl LZSSIR {
     }
 
     #[track_caller]
-    fn with_match(matches: Matches) -> Self {
+    fn with_match(matches: Match) -> Self {
         assert!(
             matches.len >= LZSS::MIN_LEN,
             "len {} > {}",
@@ -568,7 +545,7 @@ impl LZSSIR {
         } else {
             let len = (self.0 >> 16) as usize + LZSS::MIN_LEN as usize;
             let offset = (self.0 >> 32) as usize;
-            f(LZSS::Match(Matches::new(len, offset)))?;
+            f(LZSS::Match(Match::new(len, offset)))?;
         }
         Ok(())
     }
