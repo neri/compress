@@ -350,6 +350,11 @@ impl BitStreamWriter {
         }
     }
 
+    pub fn write_next_bytes(&mut self, bytes: &[u8]) {
+        self.skip_to_next_byte_boundary();
+        self.buf.extend_from_slice(bytes);
+    }
+
     #[inline]
     pub fn into_bytes(mut self) -> Vec<u8> {
         self.skip_to_next_byte_boundary();
@@ -405,10 +410,7 @@ impl Write<&[VarBitValue]> for BitStreamWriter {
     }
 }
 
-#[cfg(target_pointer_width = "64")]
-type AccRepr = u64;
-#[cfg(target_pointer_width = "32")]
-type AccRepr = u32;
+type AccRepr = usize;
 
 #[repr(C)]
 pub struct BitStreamReader<'a> {
@@ -436,15 +438,15 @@ impl<'a> BitStreamReader<'a> {
         Some(*left)
     }
 
+    #[inline]
     pub fn advance(&mut self, bits: BitSize) -> Option<()> {
-        let bits = bits.as_usize();
-        if bits <= self.left {
+        if bits.as_usize() <= self.left {
             unsafe {
-                self._advance(bits);
+                self._advance(bits.as_usize());
             }
             Some(())
         } else {
-            let mut bits_left = bits - self.left;
+            let mut bits_left = bits.as_usize() - self.left;
             while bits_left >= 8 {
                 self._iter_next()?;
                 bits_left -= 8;
@@ -469,13 +471,9 @@ impl<'a> BitStreamReader<'a> {
         self.left -= bits;
     }
 
-    // #[inline(never)]
+    #[inline]
     pub fn read_bool(&mut self) -> Option<bool> {
-        if self.left == 0 {
-            self.acc = self._iter_next()? as AccRepr;
-            self.left = 8;
-        }
-        let result = self.acc & 1 != 0;
+        let result = self.peek_bits(BitSize::Bit1)? != 0;
         unsafe {
             self._advance(1);
         }
@@ -500,7 +498,7 @@ impl<'a> BitStreamReader<'a> {
             unsafe {
                 self._advance(bits.as_usize());
             }
-            return Some(result);
+            Some(result)
         } else {
             while bits.as_usize() > self.left {
                 self.acc |= (self._iter_next()? as AccRepr) << self.left;
@@ -510,7 +508,7 @@ impl<'a> BitStreamReader<'a> {
             unsafe {
                 self._advance(bits.as_usize());
             }
-            return Some(result);
+            Some(result)
         }
     }
 
@@ -536,7 +534,7 @@ impl<'a> BitStreamReader<'a> {
             self.left += 8;
             self.slice = next;
         }
-        return Some(self.acc as u32 & bits.mask());
+        Some(self.acc as u32 & bits.mask())
     }
 
     #[inline]
@@ -582,6 +580,16 @@ impl<'a> BitStreamReader<'a> {
         if size == 0 {
             return Some(&[]);
         }
+        if self.left > 0 {
+            let rewind = self.left / 8;
+            self.left = 0;
+            self.slice = unsafe {
+                core::slice::from_raw_parts(
+                    self.slice.as_ptr().sub(rewind),
+                    self.slice.len() + rewind,
+                )
+            }
+        }
         let (left, right) = self.slice.split_at_checked(size)?;
         self.slice = right;
         Some(left)
@@ -603,6 +611,7 @@ mod tests {
 
     #[test]
     fn bit_test() {
+        let tail = b"Lorem ipsum";
         for padding_size in 1..=16 {
             let padding_mask = (1u32 << padding_size) - 1;
             for value_size in 1..=16 {
@@ -634,6 +643,7 @@ mod tests {
                     writer.push(VarBitValue::new(value_size, pattern_n));
                     writer.push(VarBitValue::new(padding_size, 0));
                     writer.push(VarBitValue::with_bool(true));
+                    writer.write_next_bytes(tail);
                     let stream = writer.into_bytes();
                     println!("DATA: {:02x?}", &stream);
 
@@ -644,6 +654,8 @@ mod tests {
                     assert_eq!(reader.read_bits(padding_size).unwrap(), padding_mask);
                     assert_eq!(reader.read_bits(value_size).unwrap(), pattern_n & mask);
                     assert_eq!(reader.read_bits(padding_size).unwrap(), 0);
+                    assert_eq!(reader.read_bool().unwrap(), true);
+                    assert_eq!(reader.read_next_bytes_slice(tail.len()).unwrap(), tail);
 
                     // test for peek_bits + read_bits
                     let mut reader = BitStreamReader::new(&stream);
@@ -657,6 +669,9 @@ mod tests {
                     assert_eq!(reader.read_bits(value_size).unwrap(), pattern_n & mask);
                     assert_eq!(reader.peek_bits(padding_size).unwrap(), 0);
                     assert_eq!(reader.read_bits(padding_size).unwrap(), 0);
+                    assert_eq!(reader.peek_bits(BitSize::Bit1).unwrap(), 1);
+                    assert_eq!(reader.read_bits(BitSize::Bit1).unwrap(), 1);
+                    assert_eq!(reader.read_next_bytes_slice(tail.len()).unwrap(), tail);
 
                     // test for peek_bits + advance
                     let mut reader = BitStreamReader::new(&stream);
@@ -670,6 +685,9 @@ mod tests {
                     reader.advance(value_size).unwrap();
                     assert_eq!(reader.peek_bits(padding_size).unwrap(), 0);
                     reader.advance(padding_size).unwrap();
+                    assert_eq!(reader.peek_bits(BitSize::Bit1).unwrap(), 1);
+                    reader.advance(BitSize::Bit1).unwrap();
+                    assert_eq!(reader.read_next_bytes_slice(tail.len()).unwrap(), tail);
                 }
             }
         }

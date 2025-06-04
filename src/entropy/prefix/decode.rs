@@ -133,7 +133,10 @@ impl CanonicalPrefixDecoder {
         DecodeTreeNode::new(&self.decode_tree, 0)
     }
 
-    // #[inline(never)]
+    /// Decodes a symbol using the lookup table.
+    ///
+    /// This function is fast but cannot process prefix code that is not in the lookup table,
+    /// so it falls back to the slow version.
     #[inline]
     pub fn decode(&self, reader: &mut BitStreamReader) -> Result<u32, DecodeError> {
         if let Some(key) = reader.peek_bits(self.peek_bits) {
@@ -147,9 +150,13 @@ impl CanonicalPrefixDecoder {
                 return Ok(symbol1);
             }
         }
-        self._decode_failthrough(reader)
+        self.decode_slow(reader)
     }
-    fn _decode_failthrough(&self, reader: &mut BitStreamReader) -> Result<u32, DecodeError> {
+
+    /// Decodes a symbol.
+    ///
+    /// This function is slower than the lookup version, but can process all prefix codes.
+    pub fn decode_slow(&self, reader: &mut BitStreamReader) -> Result<u32, DecodeError> {
         let mut node = self.root_node();
         loop {
             let bit = reader.read_bool().ok_or(DecodeError::UnexpectedEof)?;
@@ -209,10 +216,7 @@ impl CanonicalPrefixDecoder {
             let prefix_bit = reader
                 .read_bits(BitSize::Bit3)
                 .ok_or(DecodeError::InvalidData)?;
-            let p = lengths
-                .get_mut(index as usize)
-                .ok_or(DecodeError::InvalidData)?;
-            *p = prefix_bit as u8;
+            lengths[index as usize] = prefix_bit as u8;
         }
 
         output.reserve(output_size);
