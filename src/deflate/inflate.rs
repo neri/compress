@@ -2,10 +2,21 @@
 
 use super::*;
 use crate::entropy::prefix::CanonicalPrefixDecoder;
+use crate::lz::LzOutputBuffer;
 use crate::num::bits::{BitSize, BitStreamReader};
 
-/// Decompresses a deflate stream.
+/// Decompresses a deflate stream into a new vector.
 pub fn inflate(input: &[u8], decode_size: usize) -> Result<Vec<u8>, DecodeError> {
+    let mut output = Vec::new();
+    output.resize(decode_size, 0);
+    inflate_in_place(input, &mut output)?;
+    Ok(output)
+}
+
+/// Decompresses a deflate stream in place into the provided output buffer.
+pub fn inflate_in_place(input: &[u8], output: &mut [u8]) -> Result<(), DecodeError> {
+    let mut output = LzOutputBuffer::new(output);
+
     // In zlib, the first byte is always 08, 78, etc., but a pure deflate stream will never have such a value.
     let leading = *input.get(0).ok_or(DecodeError::UnexpectedEof)?;
     let (skip, _window_size) = if leading & 0x0f == 0x08 {
@@ -30,10 +41,7 @@ pub fn inflate(input: &[u8], decode_size: usize) -> Result<Vec<u8>, DecodeError>
         reader.advance(skip);
     }
 
-    let mut output = Vec::new();
-    output.reserve(decode_size);
-
-    while output.len() < decode_size {
+    while !output.is_eof() {
         let bfinal = reader.read_bool().ok_or(DecodeError::UnexpectedEof)?;
         let btype = reader
             .read_bits(BitSize::Bit2)
@@ -48,11 +56,13 @@ pub fn inflate(input: &[u8], decode_size: usize) -> Result<Vec<u8>, DecodeError>
                 if len != !nlen {
                     return Err(DecodeError::InvalidData);
                 }
-                output.extend_from_slice(
-                    reader
-                        .read_next_bytes_slice(len as usize)
-                        .ok_or(DecodeError::UnexpectedEof)?,
-                );
+                output
+                    .extend_from_slice(
+                        reader
+                            .read_next_bytes_slice(len as usize)
+                            .ok_or(DecodeError::UnexpectedEof)?,
+                    )
+                    .ok_or(DecodeError::InvalidData)?;
             }
             0b01 => {
                 // fixed Huffman block
@@ -70,13 +80,7 @@ pub fn inflate(input: &[u8], decode_size: usize) -> Result<Vec<u8>, DecodeError>
                 }
                 let lengths_dist = [5; 32];
 
-                _decode_block(
-                    &mut reader,
-                    &mut output,
-                    decode_size,
-                    &lengths_lit,
-                    &lengths_dist,
-                )?;
+                _decode_block(&mut reader, &mut output, &lengths_lit, &lengths_dist)?;
             }
             0b10 => {
                 // dynamic Huffman block
@@ -95,13 +99,7 @@ pub fn inflate(input: &[u8], decode_size: usize) -> Result<Vec<u8>, DecodeError>
                 )?;
                 let (lengths_lit, lengths_dist) = prefix_table.split_at(hlit);
 
-                _decode_block(
-                    &mut reader,
-                    &mut output,
-                    decode_size,
-                    lengths_lit,
-                    lengths_dist,
-                )?;
+                _decode_block(&mut reader, &mut output, lengths_lit, lengths_dist)?;
             }
             _ => {
                 // reserved (error)
@@ -113,18 +111,12 @@ pub fn inflate(input: &[u8], decode_size: usize) -> Result<Vec<u8>, DecodeError>
         }
     }
 
-    if output.len() <= decode_size {
-        Ok(output)
-    } else {
-        // If the decoding result is larger than expected, an error is generated.
-        Err(DecodeError::InvalidInput)
-    }
+    Ok(())
 }
 
 fn _decode_block(
     reader: &mut BitStreamReader,
-    output: &mut Vec<u8>,
-    decode_size: usize,
+    output: &mut LzOutputBuffer,
     lengths_lit: &[u8],
     lengths_dist: &[u8],
 ) -> Result<(), DecodeError> {
@@ -132,11 +124,11 @@ fn _decode_block(
         let decoder_lit = CanonicalPrefixDecoder::with_lengths(lengths_lit)?;
         let decoder_dist = CanonicalPrefixDecoder::with_lengths(lengths_dist)?;
 
-        while output.len() < decode_size {
+        while !output.is_eof() {
             let lit = decoder_lit.decode(reader)?;
             if lit < 256 {
                 // literal
-                output.push(lit as u8);
+                let _ = output.push_literal(lit as u8);
             } else if lit == 256 {
                 // end of block
                 break;
@@ -144,26 +136,22 @@ fn _decode_block(
                 // length/distance pair
                 let len = LenType::decode_value((lit - 257) as u8, reader)
                     .ok_or(DecodeError::InvalidData)? as usize;
-                let offset = DistanceType::decode_value(decoder_dist.decode(reader)? as u8, reader)
-                    .ok_or(DecodeError::InvalidData)? as usize;
+                let distance =
+                    DistanceType::decode_value(decoder_dist.decode(reader)? as u8, reader)
+                        .ok_or(DecodeError::InvalidData)? as usize;
 
-                if offset > output.len() {
-                    return Err(DecodeError::InvalidData);
-                }
-                let copy_len = len.min(decode_size - output.len());
-                output.reserve(copy_len);
-                for _ in 0..copy_len {
-                    output.push(output[output.len() - offset]);
-                }
+                output
+                    .copy_lz(distance, len)
+                    .ok_or(DecodeError::InvalidData)?;
             }
         }
     } else {
         let decoder_lit = CanonicalPrefixDecoder::with_lengths(lengths_lit)?;
-        while output.len() < decode_size {
+        while !output.is_eof() {
             let lit = decoder_lit.decode(reader)?;
             if lit < 256 {
                 // literal
-                output.push(lit as u8);
+                let _ = output.push_literal(lit as u8);
             } else if lit == 256 {
                 // end of block
                 break;

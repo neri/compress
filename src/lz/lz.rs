@@ -90,3 +90,92 @@ impl Default for Match {
         Self::ZERO
     }
 }
+
+pub struct LzOutputBuffer<'a> {
+    buffer: &'a mut [u8],
+    position: usize,
+}
+
+impl<'a> LzOutputBuffer<'a> {
+    #[inline]
+    pub fn new(buffer: &'a mut [u8]) -> Self {
+        Self {
+            buffer,
+            position: 0,
+        }
+    }
+
+    #[inline]
+    pub fn is_eof(&self) -> bool {
+        self.position >= self.buffer.len()
+    }
+
+    #[inline]
+    pub fn push_literal(&mut self, byte: u8) -> LzOutputBufferResult {
+        if self.position < self.buffer.len() {
+            self.buffer[self.position] = byte;
+            self.position += 1;
+            LzOutputBufferResult::Success
+        } else {
+            LzOutputBufferResult::Failure
+        }
+    }
+
+    pub fn extend_from_slice(&mut self, data: &[u8]) -> LzOutputBufferResult {
+        if self.position + data.len() <= self.buffer.len() {
+            self.buffer[self.position..self.position + data.len()].copy_from_slice(data);
+            self.position += data.len();
+            LzOutputBufferResult::Success
+        } else {
+            LzOutputBufferResult::Failure
+        }
+    }
+
+    pub fn copy_lz(&mut self, distance: usize, copy_len: usize) -> LzOutputBufferResult {
+        if distance > self.position {
+            return LzOutputBufferResult::Failure;
+        }
+        let copy_len = copy_len.min(self.buffer.len() - self.position);
+        unsafe {
+            let dest = self.buffer.as_mut_ptr().add(self.position);
+            if distance == 1 {
+                core::slice::from_raw_parts_mut(dest, copy_len).fill(dest.sub(1).read_volatile());
+            } else {
+                _memcpy(dest, dest.sub(distance), copy_len);
+            }
+        }
+        self.position += copy_len;
+
+        LzOutputBufferResult::Success
+    }
+}
+
+#[inline]
+unsafe fn _memcpy(dest: *mut u8, src: *const u8, count: usize) {
+    unsafe {
+        let mut dest = dest;
+        let mut src = src;
+        for _ in 0..count {
+            dest.write(src.read());
+            dest = dest.add(1);
+            src = src.add(1);
+        }
+    }
+}
+
+#[must_use]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LzOutputBufferResult {
+    Success,
+    Failure,
+}
+
+impl LzOutputBufferResult {
+    #[inline]
+    pub fn ok_or<E>(self, e: E) -> Result<(), E> {
+        match self {
+            LzOutputBufferResult::Success => Ok(()),
+            LzOutputBufferResult::Failure => Err(e),
+        }
+    }
+}
