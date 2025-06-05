@@ -331,7 +331,7 @@ impl BitStreamWriter {
             }
         }
 
-        assert!(
+        debug_assert!(
             remain_bits < 8,
             "BITS < 8 BUT {}, input {:?}",
             remain_bits,
@@ -428,9 +428,7 @@ impl<'a> BitStreamReader<'a> {
             acc: 0,
         }
     }
-}
 
-impl<'a> BitStreamReader<'a> {
     #[inline]
     fn _iter_next(&mut self) -> Option<u8> {
         let (left, right) = self.slice.split_first()?;
@@ -491,7 +489,6 @@ impl<'a> BitStreamReader<'a> {
         self.read_bits(BitSize::BYTE).map(|v| v as u8)
     }
 
-    // #[inline(never)]
     pub fn read_bits(&mut self, bits: BitSize) -> Option<u32> {
         if bits.as_usize() <= self.left {
             let result = self.acc as u32 & bits.mask();
@@ -512,7 +509,6 @@ impl<'a> BitStreamReader<'a> {
         }
     }
 
-    // #[inline(never)]
     #[inline]
     pub fn peek_bits(&mut self, bits: BitSize) -> Option<u32> {
         if bits.as_usize() <= self.left {

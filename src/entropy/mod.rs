@@ -7,6 +7,7 @@ pub mod prefix;
 
 pub mod fse;
 
+/// Calculates the entropy of a sequence of blocks.
 pub fn entropy_of_blocks(blocks: &[&[u8]]) -> f64 {
     let mut freq_table = [0; 256];
     for bytes in blocks {
@@ -17,6 +18,7 @@ pub fn entropy_of_blocks(blocks: &[&[u8]]) -> f64 {
     entropy_of(&freq_table)
 }
 
+/// Calculate the entropy of a byte slice.
 pub fn entropy_of_bytes(bytes: &[u8]) -> f64 {
     let mut freq_table = [0; 256];
     for &byte in bytes {
@@ -25,6 +27,7 @@ pub fn entropy_of_bytes(bytes: &[u8]) -> f64 {
     entropy_of(&freq_table)
 }
 
+/// Calculate the entropy of a frequency table.
 pub fn entropy_of(freq_table: &[usize]) -> f64 {
     let total_size = freq_table.iter().sum::<usize>() as f64;
     let mut entropy = 0.0;
