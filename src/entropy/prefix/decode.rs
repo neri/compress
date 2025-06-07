@@ -99,13 +99,21 @@ impl CanonicalPrefixDecoder {
                 .lookup_table2
                 .resize(1 << peek_bits, LookupTableEntry2::EMPTY);
             let max_peek_value = decoder.lookup_table2.len();
+            let prefix_table2 = prefix_table
+                .iter()
+                .filter(|(sym, path)| {
+                    *sym < 256 && path.size().as_usize() <= (peek_bits - min_bits)
+                })
+                .map(|(sym, path)| (*sym, path.reversed()))
+                .collect::<Vec<_>>();
             for (sym1, path1) in prefix_table.iter().copied() {
                 if path1.size().as_usize() > peek_bits {
                     continue;
                 }
                 let entry =
                     LookupTableEntry2::new(LitLen2::from_lit_len(sym1 as u32), path1.size());
-                let mut path = path1.reversed().value() as usize;
+                let rpath1 = path1.reversed();
+                let mut path = rpath1.value() as usize;
                 let delta = path1.size().power_of_two() as usize;
                 while path < max_peek_value {
                     decoder.lookup_table2[path] = entry;
@@ -115,22 +123,17 @@ impl CanonicalPrefixDecoder {
                     continue;
                 }
                 let sym1 = sym1 as u8;
-                let rpath1 = path1.reversed();
-                for (sym2, path2) in prefix_table.iter().copied() {
-                    if sym2 > 255 {
-                        continue;
-                    }
-                    let sym2 = sym2 as u8;
-                    let Some(path_len) = rpath1.size().checked_add(path2.size()) else {
+                for (sym2, path2) in prefix_table2.iter().copied() {
+                    let Some(path_len) = path1.size().checked_add(path2.size()) else {
                         continue;
                     };
                     if path_len.as_usize() > peek_bits {
                         continue;
                     }
+                    let sym2 = sym2 as u8;
                     let entry = LookupTableEntry2::new(LitLen2::Double(sym1, sym2), path_len);
-                    let rpath2 = path2.reversed();
                     let path2 = rpath1.value() as usize
-                        | (rpath2.value() as usize) << rpath1.size().as_usize();
+                        | (path2.value() as usize) << path1.size().as_usize();
                     let mut path = path2;
                     let delta = path_len.power_of_two() as usize;
                     while path < max_peek_value {
@@ -544,7 +547,7 @@ impl PartialEq for LitLen2 {
 }
 
 #[test]
-fn literal3_repr() {
+fn literal2_repr() {
     let lit_len = LitLen2::Length(0x12);
     let bits = BitSize::Bit5;
     let entry = LookupTableEntry2::new(lit_len, bits);
