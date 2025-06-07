@@ -25,6 +25,7 @@ where
         distance
     );
     unsafe {
+        // Safety: `data` is guaranteed to be valid, and `current` and `distance` are checked.
         let max_len = data.len() - current;
         let p = data.as_ptr().add(current);
         let q = data.as_ptr().add(current - distance);
@@ -111,9 +112,9 @@ impl<'a> LzOutputBuffer<'a> {
     }
 
     #[inline]
-    pub fn push_literal(&mut self, byte: u8) -> LzOutputBufferResult {
+    pub fn push_literal(&mut self, literal: u8) -> LzOutputBufferResult {
         if self.position < self.buffer.len() {
-            self.buffer[self.position] = byte;
+            self.buffer[self.position] = literal;
             self.position += 1;
             LzOutputBufferResult::Success
         } else {
@@ -137,6 +138,7 @@ impl<'a> LzOutputBuffer<'a> {
         }
         let copy_len = copy_len.min(self.buffer.len() - self.position);
         unsafe {
+            // Safety: distance is guaranteed to be valid, and copy_len is checked against the buffer size.
             let dest = self.buffer.as_mut_ptr().add(self.position);
             if distance == 1 {
                 core::slice::from_raw_parts_mut(dest, copy_len).fill(dest.sub(1).read_volatile());
@@ -150,6 +152,9 @@ impl<'a> LzOutputBuffer<'a> {
     }
 }
 
+/// # Safety
+///
+/// Everything is the caller's responsibility.
 #[inline]
 unsafe fn _memcpy(dest: *mut u8, src: *const u8, count: usize) {
     unsafe {

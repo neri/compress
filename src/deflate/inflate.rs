@@ -1,7 +1,7 @@
 //! Deflate decompressor
 
 use super::*;
-use crate::entropy::prefix::CanonicalPrefixDecoder;
+use crate::entropy::prefix::{CanonicalPrefixDecoder, LitLen2};
 use crate::lz::LzOutputBuffer;
 use crate::num::bits::{BitSize, BitStreamReader};
 
@@ -121,32 +121,40 @@ fn _decode_block(
     lengths_dist: &[u8],
 ) -> Result<(), DecodeError> {
     if lengths_dist.len() >= 2 {
-        let decoder_lit = CanonicalPrefixDecoder::with_lengths(lengths_lit)?;
-        let decoder_dist = CanonicalPrefixDecoder::with_lengths(lengths_dist)?;
+        let decoder_lit = CanonicalPrefixDecoder::with_lengths(lengths_lit, true)?;
+        let decoder_dist = CanonicalPrefixDecoder::with_lengths(lengths_dist, false)?;
 
         while !output.is_eof() {
-            let lit = decoder_lit.decode(reader)?;
-            if lit < 256 {
-                // literal
-                let _ = output.push_literal(lit as u8);
-            } else if lit == 256 {
-                // end of block
-                break;
-            } else {
-                // length/distance pair
-                let len = LenType::decode_value((lit - 257) as u8, reader)
-                    .ok_or(DecodeError::InvalidData)? as usize;
-                let distance =
-                    DistanceType::decode_value(decoder_dist.decode(reader)? as u8, reader)
-                        .ok_or(DecodeError::InvalidData)? as usize;
+            match decoder_lit.decode2(reader)? {
+                LitLen2::Single(lit) => {
+                    // literal
+                    let _ = output.push_literal(lit);
+                }
+                LitLen2::Double(lit1, lit2) => {
+                    // two literals
+                    let _ = output.push_literal(lit1);
+                    let _ = output.push_literal(lit2);
+                }
+                LitLen2::Length(lit) => {
+                    // length/distance pair
+                    let len = LenType::decode_value(lit, reader).ok_or(DecodeError::InvalidData)?
+                        as usize;
+                    let distance =
+                        DistanceType::decode_value(decoder_dist.decode(reader)? as u8, reader)
+                            .ok_or(DecodeError::InvalidData)? as usize;
 
-                output
-                    .copy_lz(distance, len)
-                    .ok_or(DecodeError::InvalidData)?;
+                    output
+                        .copy_lz(distance, len)
+                        .ok_or(DecodeError::InvalidData)?;
+                }
+                LitLen2::EndOfBlock(_, _, _) => {
+                    // end of block
+                    break;
+                }
             }
         }
     } else {
-        let decoder_lit = CanonicalPrefixDecoder::with_lengths(lengths_lit)?;
+        let decoder_lit = CanonicalPrefixDecoder::with_lengths(lengths_lit, false)?;
         while !output.is_eof() {
             let lit = decoder_lit.decode(reader)?;
             if lit < 256 {

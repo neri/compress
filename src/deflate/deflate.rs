@@ -233,6 +233,7 @@ impl<'a> DeflateIrBlock<'a> {
     /// Panic if `self` and `next` are not contiguous.
     pub fn merged(&self, next: &Self) -> Self {
         let new_block = unsafe {
+            // Safety: `self.block` and `next.block` must be contiguous.
             let self_next = self.block.as_ptr().add(self.block.len());
             assert_eq!(self_next, next.block.as_ptr());
             core::slice::from_raw_parts(self.block.as_ptr(), self.block.len() + next.block.len())

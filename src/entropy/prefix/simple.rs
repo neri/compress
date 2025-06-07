@@ -106,17 +106,8 @@ impl SimplePrefixCoder {
             len: input.len(),
         };
 
-        // if false {
-        //     let decoded = encoded.decode();
-        //     assert_eq!(decoded, input);
-        // }
-
         Some(encoded)
     }
-
-    // pub fn decode(&self) -> Vec<u8> {
-    //     todo!()
-    // }
 
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut vec = Vec::new();

@@ -10,6 +10,7 @@ const MAX_LOOKUP_TABLE_BITS: usize = 12;
 #[allow(unused)]
 pub struct CanonicalPrefixDecoder {
     lookup_table: Vec<LookupTableEntry>,
+    lookup_table2: Vec<LookupTableEntry2>,
     decode_tree: Vec<u32>,
     peek_bits: BitSize,
     max_bits: BitSize,
@@ -23,6 +24,7 @@ impl CanonicalPrefixDecoder {
         Self {
             decode_tree: [0].to_vec(),
             lookup_table: Vec::new(),
+            lookup_table2: Vec::new(),
             max_symbol,
             peek_bits,
             max_bits,
@@ -30,7 +32,7 @@ impl CanonicalPrefixDecoder {
         }
     }
 
-    pub fn with_lengths(lengths: &[u8]) -> Result<Self, DecodeError> {
+    pub fn with_lengths(lengths: &[u8], is_lzss_lit: bool) -> Result<Self, DecodeError> {
         let prefix_table =
             Self::reorder_prefix_table(lengths.iter().enumerate().map(|(i, &v)| (i, v)))?;
 
@@ -55,7 +57,11 @@ impl CanonicalPrefixDecoder {
             .min()
             .ok_or(DecodeError::InvalidData)?;
 
-        let peek_bits = max_bits.min(MAX_LOOKUP_TABLE_BITS);
+        let peek_bits = if is_lzss_lit {
+            (max_bits * 2).min(MAX_LOOKUP_TABLE_BITS)
+        } else {
+            max_bits.min(MAX_LOOKUP_TABLE_BITS)
+        };
 
         let mut decoder = Self::new(
             max_symbol,
@@ -69,20 +75,68 @@ impl CanonicalPrefixDecoder {
             decoder.insert_node(path, value as u32)?;
         }
 
-        decoder
-            .lookup_table
-            .resize(1 << peek_bits, LookupTableEntry::EMPTY);
-        let max_peek_value = decoder.lookup_table.len();
-        for (sym1, path1) in prefix_table.iter().copied() {
-            if path1.size().as_usize() > peek_bits {
-                continue;
+        if !is_lzss_lit {
+            decoder
+                .lookup_table
+                .resize(1 << peek_bits, LookupTableEntry::EMPTY);
+            let max_peek_value = decoder.lookup_table.len();
+            for (sym1, path1) in prefix_table.iter().copied() {
+                if path1.size().as_usize() > peek_bits {
+                    continue;
+                }
+                if let Some(entry) = LookupTableEntry::new(sym1, path1.size()) {
+                    let mut path = path1.reversed().value() as usize;
+                    let delta = path1.size().power_of_two() as usize;
+                    while path < max_peek_value {
+                        decoder.lookup_table[path] = entry;
+                        path += delta;
+                    }
+                }
             }
-            if let Some(item) = LookupTableEntry::new(sym1, path1.size()) {
+        } else {
+            // For LZSS literal codes, we use a different lookup table
+            decoder
+                .lookup_table2
+                .resize(1 << peek_bits, LookupTableEntry2::EMPTY);
+            let max_peek_value = decoder.lookup_table2.len();
+            for (sym1, path1) in prefix_table.iter().copied() {
+                if path1.size().as_usize() > peek_bits {
+                    continue;
+                }
+                let entry =
+                    LookupTableEntry2::new(LitLen2::from_lit_len(sym1 as u32), path1.size());
                 let mut path = path1.reversed().value() as usize;
                 let delta = path1.size().power_of_two() as usize;
                 while path < max_peek_value {
-                    decoder.lookup_table[path] = item;
+                    decoder.lookup_table2[path] = entry;
                     path += delta;
+                }
+                if sym1 > 255 || path1.size().as_usize() + min_bits > peek_bits {
+                    continue;
+                }
+                let sym1 = sym1 as u8;
+                let rpath1 = path1.reversed();
+                for (sym2, path2) in prefix_table.iter().copied() {
+                    if sym2 > 255 {
+                        continue;
+                    }
+                    let sym2 = sym2 as u8;
+                    let Some(path_len) = rpath1.size().checked_add(path2.size()) else {
+                        continue;
+                    };
+                    if path_len.as_usize() > peek_bits {
+                        continue;
+                    }
+                    let entry = LookupTableEntry2::new(LitLen2::Double(sym1, sym2), path_len);
+                    let rpath2 = path2.reversed();
+                    let path2 = rpath1.value() as usize
+                        | (rpath2.value() as usize) << rpath1.size().as_usize();
+                    let mut path = path2;
+                    let delta = path_len.power_of_two() as usize;
+                    while path < max_peek_value {
+                        decoder.lookup_table2[path] = entry;
+                        path += delta;
+                    }
                 }
             }
         }
@@ -144,13 +198,29 @@ impl CanonicalPrefixDecoder {
                 .lookup_table
                 .get(key as usize)
                 .ok_or(DecodeError::InvalidData)?;
-            if let Some(bits) = entry.advance_bits() {
+            if let Some(bits) = entry.bit_len() {
                 let symbol1 = entry.symbol1();
                 reader.advance(bits);
                 return Ok(symbol1);
             }
         }
         self.decode_slow(reader)
+    }
+
+    /// Decode up to 2 literals using the lookup table.
+    #[inline]
+    pub fn decode2(&self, reader: &mut BitStreamReader) -> Result<LitLen2, DecodeError> {
+        if let Some(key) = reader.peek_bits(self.peek_bits) {
+            let entry = self
+                .lookup_table2
+                .get(key as usize)
+                .ok_or(DecodeError::InvalidData)?;
+            if let Some(bits) = entry.bit_len() {
+                reader.advance(bits);
+                return Ok(entry.into_lit_len());
+            }
+        }
+        self.decode2_slow(reader)
     }
 
     /// Decodes a symbol.
@@ -165,6 +235,10 @@ impl CanonicalPrefixDecoder {
                 ChildNode::Node(child) => node = child,
             }
         }
+    }
+
+    pub fn decode2_slow(&self, reader: &mut BitStreamReader) -> Result<LitLen2, DecodeError> {
+        self.decode_slow(reader).map(|v| LitLen2::from_lit_len(v))
     }
 
     pub fn reorder_prefix_table<K>(
@@ -220,7 +294,7 @@ impl CanonicalPrefixDecoder {
         }
 
         output.reserve(output_size);
-        let decoder = CanonicalPrefixDecoder::with_lengths(&lengths)?;
+        let decoder = CanonicalPrefixDecoder::with_lengths(&lengths, false)?;
         let mut prev = 0; // not strictly defined
         while output.len() < output_size {
             let decoded = decoder.decode(reader)? as u8;
@@ -285,7 +359,7 @@ impl CanonicalPrefixDecoder {
         }
 
         output.reserve(output_size);
-        let decoder = CanonicalPrefixDecoder::with_lengths(&lengths)?;
+        let decoder = CanonicalPrefixDecoder::with_lengths(&lengths, false)?;
         let mut prev = 8;
         while output.len() < output_size {
             let decoded = decoder.decode(reader)? as u8;
@@ -368,8 +442,8 @@ pub enum ChildNode<'a> {
 ///
 /// format:
 /// * bit0-3 bit lengths to advance (1-15)
-/// * bit4-11 symbol1
-/// * bit12-15 mbz
+/// * bit4-6 reserved, mbz
+/// * bit7-15 symbol1
 ///
 #[repr(transparent)]
 #[derive(Debug, Clone, Copy)]
@@ -383,21 +457,95 @@ impl LookupTableEntry {
         if bits > BitSize::Bit15 {
             return None;
         }
-        Some(Self((bits.as_usize() as u16) | (symbol1 as u16) << 4))
-    }
-
-    #[inline]
-    pub const fn is_empty(&self) -> bool {
-        self.0 == 0
+        Some(Self((bits.as_usize() as u16) | (symbol1 as u16) << 7))
     }
 
     #[inline]
     pub const fn symbol1(&self) -> u32 {
-        self.0 as u32 >> 4
+        self.0 as u32 >> 7
     }
 
     #[inline]
-    pub const fn advance_bits(&self) -> Option<BitSize> {
+    pub const fn bit_len(&self) -> Option<BitSize> {
         BitSize::new((self.0 & 15) as u8)
     }
+}
+
+/// A lookup table entry for the literal 2 decoder.
+///
+/// format:
+/// * bit0-7 literal type (0-3)
+/// * bit8-15 symbol1
+/// * bit16-23 symbol2
+/// * bit24-31 number of bits to advance (1-24)
+#[repr(transparent)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct LookupTableEntry2(u32);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LitLen2 {
+    /// End of block marker in deflate, with 3 bytes of padding for performance
+    EndOfBlock(u8, u8, u8),
+    /// Single literal value
+    Single(u8),
+    /// Two literal values
+    Double(u8, u8),
+    /// Length value, used for length/distance pairs
+    Length(u8),
+}
+
+impl LookupTableEntry2 {
+    pub const EMPTY: Self = Self(0);
+
+    #[inline]
+    pub fn new(lit: LitLen2, bit_len: BitSize) -> Self {
+        let lit: [u8; 4] = unsafe { core::mem::transmute_copy(&lit) };
+        let val = u32::from_le_bytes(lit);
+        Self(val | (bit_len as u32) << 24)
+    }
+
+    #[inline]
+    pub fn bit_len(&self) -> Option<BitSize> {
+        BitSize::new((self.0 >> 24) as u8)
+    }
+
+    #[inline]
+    pub fn into_lit_len(self) -> LitLen2 {
+        let lit = self.0.to_le_bytes();
+        unsafe { core::mem::transmute(lit) }
+    }
+}
+
+impl LitLen2 {
+    #[inline]
+    pub fn from_lit_len(value: u32) -> Self {
+        if value < 256 {
+            Self::Single(value as u8)
+        } else if value == 256 {
+            Self::EndOfBlock(0, 0, 0)
+        } else {
+            Self::Length((value - 257) as u8)
+        }
+    }
+}
+
+#[test]
+fn literal3_repr() {
+    let lit_len = LitLen2::Length(0x12);
+    let bits = BitSize::Bit5;
+    let entry = LookupTableEntry2::new(lit_len, bits);
+    assert_eq!(entry.bit_len(), Some(bits));
+    assert_eq!(entry.into_lit_len(), lit_len);
+
+    let lit_len = LitLen2::Single(0x34);
+    let bits = BitSize::Bit7;
+    let entry = LookupTableEntry2::new(lit_len, bits);
+    assert_eq!(entry.bit_len(), Some(bits));
+    assert_eq!(entry.into_lit_len(), lit_len);
+
+    let lit_len = LitLen2::Double(0x56, 0x78);
+    let bits = BitSize::Bit11;
+    let entry = LookupTableEntry2::new(lit_len, bits);
+    assert_eq!(entry.bit_len(), Some(bits));
+    assert_eq!(entry.into_lit_len(), lit_len);
 }

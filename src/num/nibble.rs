@@ -65,7 +65,7 @@ impl Nibble {
 
     #[inline]
     pub const fn new_truncated(value: u8) -> Self {
-        // SAFETY: This is safe because the value is truncated to 4 bits
+        // Safety: This is safe because the value is truncated to 4 bits
         unsafe { transmute(value & 15) }
     }
 
@@ -170,16 +170,19 @@ impl Nibble {
 
     #[inline]
     pub const fn saturating_add(self, rhs: Self) -> Self {
+        // Safety: This is safe because we ensure the result does not exceed 15
         unsafe { Self::new_unchecked((self as u8).saturating_add(rhs as u8)) }.min(Self::MAX)
     }
 
     #[inline]
     pub const fn saturating_sub(self, rhs: Self) -> Self {
+        // Safety: This is safe because we ensure the result does not go below 0
         unsafe { Self::new_unchecked((self as u8).saturating_sub(rhs as u8)) }
     }
 
     #[inline]
     pub const fn saturating_mul(self, rhs: Self) -> Self {
+        // Safety: This is safe because we ensure the result does not exceed 15
         unsafe { Self::new_unchecked((self as u8).saturating_mul(rhs as u8)) }.min(Self::MAX)
     }
 

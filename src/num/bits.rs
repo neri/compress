@@ -105,6 +105,11 @@ impl BitSize {
     pub const fn power_of_two(&self) -> u32 {
         1 << *self as usize
     }
+
+    #[inline]
+    pub const fn checked_add(self, other: Self) -> Option<Self> {
+        Self::new(self.as_u8() + other.as_u8())
+    }
 }
 
 impl core::fmt::Display for BitSize {
@@ -140,7 +145,7 @@ pub const fn nearest_power_of_two(value: usize) -> usize {
 
 /// A Variable-length bit value
 #[repr(transparent)]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct VarBitValue(u32);
 
 impl VarBitValue {
@@ -171,6 +176,7 @@ impl VarBitValue {
 
     #[inline]
     pub fn size(&self) -> BitSize {
+        // Safety: The value is guaranteed at initialization
         unsafe { BitSize::new_unchecked((self.0 >> 24) as u8) }
     }
 
@@ -210,11 +216,6 @@ impl VarBitValue {
         Self::new(size, value)
     }
 
-    // #[inline]
-    // pub fn set_value(&mut self, value: u32) {
-    //     self.0 = (self.0 & 0xff_00_00_00) | (value & 0xff_ff_ff);
-    // }
-
     #[inline]
     pub fn reverse(&mut self) {
         self.0 = self.reversed().0;
@@ -237,13 +238,6 @@ impl VarBitValue {
             Some(v) => a + v.size() as usize,
             None => a,
         })
-    }
-}
-
-impl PartialEq for VarBitValue {
-    #[inline]
-    fn eq(&self, other: &Self) -> bool {
-        self.value() == other.value()
     }
 }
 
@@ -350,7 +344,8 @@ impl BitStreamWriter {
         }
     }
 
-    pub fn write_next_bytes(&mut self, bytes: &[u8]) {
+    #[inline]
+    pub fn extend_from_slice(&mut self, bytes: &[u8]) {
         self.skip_to_next_byte_boundary();
         self.buf.extend_from_slice(bytes);
     }
@@ -440,6 +435,7 @@ impl<'a> BitStreamReader<'a> {
     pub fn advance(&mut self, bits: BitSize) -> Option<()> {
         if bits.as_usize() <= self.left {
             unsafe {
+                // Safety: The value is checked
                 self._advance(bits.as_usize());
             }
             Some(())
@@ -473,6 +469,7 @@ impl<'a> BitStreamReader<'a> {
     pub fn read_bool(&mut self) -> Option<bool> {
         let result = self.peek_bits(BitSize::Bit1)? != 0;
         unsafe {
+            // Safety: By calling peek_bits first, the value should be guaranteed.
             self._advance(1);
         }
         Some(result)
@@ -493,6 +490,7 @@ impl<'a> BitStreamReader<'a> {
         if bits.as_usize() <= self.left {
             let result = self.acc as u32 & bits.mask();
             unsafe {
+                // Safety: The value is checked
                 self._advance(bits.as_usize());
             }
             Some(result)
@@ -503,6 +501,7 @@ impl<'a> BitStreamReader<'a> {
             }
             let result = self.acc as u32 & bits.mask();
             unsafe {
+                // Safety: The value is checked
                 self._advance(bits.as_usize());
             }
             Some(result)
@@ -537,6 +536,7 @@ impl<'a> BitStreamReader<'a> {
     pub fn skip_to_next_byte_boundary(&mut self) {
         if self.left & 7 != 0 {
             unsafe {
+                // Safety: The value is checked
                 self._advance(self.left & 7);
             }
         }
@@ -580,6 +580,7 @@ impl<'a> BitStreamReader<'a> {
             let rewind = self.left / 8;
             self.left = 0;
             self.slice = unsafe {
+                // Safety: The value is checked, and the slice is guaranteed to be valid.
                 core::slice::from_raw_parts(
                     self.slice.as_ptr().sub(rewind),
                     self.slice.len() + rewind,
@@ -639,7 +640,7 @@ mod tests {
                     writer.push(VarBitValue::new(value_size, pattern_n));
                     writer.push(VarBitValue::new(padding_size, 0));
                     writer.push(VarBitValue::with_bool(true));
-                    writer.write_next_bytes(tail);
+                    writer.extend_from_slice(tail);
                     let stream = writer.into_bytes();
                     println!("DATA: {:02x?}", &stream);
 
@@ -707,7 +708,7 @@ mod tests {
             (12, 16),
             (13, 16),
             (14, 16),
-            (16, 16),
+            (15, 16),
             (16, 16),
         ] {
             let test = nearest_power_of_two(value);
