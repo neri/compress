@@ -482,10 +482,11 @@ impl LookupTableEntry {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct LookupTableEntry2(u32);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy)]
 pub enum LitLen2 {
-    /// End of block marker in deflate, with 3 bytes of padding for performance
-    EndOfBlock(u8, u8, u8),
+    /// End of block marker in deflate
+    /// Takes a dummy argument for performance reasons, but the value is not saved.
+    EndOfBlock([u8; 3]),
     /// Single literal value
     Single(u8),
     /// Two literal values
@@ -499,9 +500,9 @@ impl LookupTableEntry2 {
 
     #[inline]
     pub fn new(lit: LitLen2, bit_len: BitSize) -> Self {
-        let lit: [u8; 4] = unsafe { core::mem::transmute_copy(&lit) };
-        let val = u32::from_le_bytes(lit);
-        Self(val | (bit_len as u32) << 24)
+        let mut lit: [u8; 4] = unsafe { core::mem::transmute(lit) };
+        lit[3] = bit_len.as_u8();
+        Self(u32::from_le_bytes(lit))
     }
 
     #[inline]
@@ -511,7 +512,7 @@ impl LookupTableEntry2 {
 
     #[inline]
     pub fn into_lit_len(self) -> LitLen2 {
-        let lit = self.0.to_le_bytes();
+        let lit: [u8; 4] = self.0.to_le_bytes();
         unsafe { core::mem::transmute(lit) }
     }
 }
@@ -522,9 +523,22 @@ impl LitLen2 {
         if value < 256 {
             Self::Single(value as u8)
         } else if value == 256 {
-            Self::EndOfBlock(0, 0, 0)
+            Self::EndOfBlock([0, 0, 0])
         } else {
             Self::Length((value - 257) as u8)
+        }
+    }
+}
+
+impl PartialEq for LitLen2 {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (LitLen2::EndOfBlock(_), LitLen2::EndOfBlock(_)) => true,
+            (LitLen2::Single(a), LitLen2::Single(b)) => a == b,
+            (LitLen2::Double(a1, a2), LitLen2::Double(b1, b2)) => a1 == b1 && a2 == b2,
+            (LitLen2::Length(a), LitLen2::Length(b)) => a == b,
+            _ => false,
         }
     }
 }
@@ -545,6 +559,12 @@ fn literal3_repr() {
 
     let lit_len = LitLen2::Double(0x56, 0x78);
     let bits = BitSize::Bit11;
+    let entry = LookupTableEntry2::new(lit_len, bits);
+    assert_eq!(entry.bit_len(), Some(bits));
+    assert_eq!(entry.into_lit_len(), lit_len);
+
+    let lit_len = LitLen2::EndOfBlock([0, 0, 0]);
+    let bits = BitSize::Bit13;
     let entry = LookupTableEntry2::new(lit_len, bits);
     assert_eq!(entry.bit_len(), Some(bits));
     assert_eq!(entry.into_lit_len(), lit_len);

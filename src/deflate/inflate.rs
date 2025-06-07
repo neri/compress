@@ -147,7 +147,7 @@ fn _decode_block(
                         .copy_lz(distance, len)
                         .ok_or(DecodeError::InvalidData)?;
                 }
-                LitLen2::EndOfBlock(_, _, _) => {
+                LitLen2::EndOfBlock(_) => {
                     // end of block
                     break;
                 }
