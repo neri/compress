@@ -129,7 +129,7 @@ impl ContextState {
     }
 
     #[inline]
-    pub fn context_mut(&mut self, index: usize) -> Context {
+    pub fn context_mut<'a>(&'a mut self, index: usize) -> Context<'a> {
         Context(&mut self.contexts[index])
     }
 }

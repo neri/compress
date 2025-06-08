@@ -2,7 +2,6 @@
 
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
-use core::mem::transmute;
 
 /// Suffix Array
 pub struct SuffixArray {
@@ -35,7 +34,8 @@ impl SuffixArray {
         Self::sa_is(&s, &mut sa, alphabet_max);
 
         return Self {
-            inner: unsafe { transmute(sa) },
+            // inner: sa.into_iter().map(|x| x as u32).collect(),
+            inner: unsafe { core::mem::transmute(sa) },
             offset: 1,
         };
     }

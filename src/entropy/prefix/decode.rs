@@ -503,7 +503,10 @@ impl LookupTableEntry2 {
 
     #[inline]
     pub fn new(lit: LitLen2, bit_len: BitSize) -> Self {
-        let mut lit: [u8; 4] = unsafe { core::mem::transmute(lit) };
+        let mut lit: [u8; 4] = unsafe {
+            // Safety: Believes that testing assures consistency
+            core::mem::transmute(lit)
+        };
         lit[3] = bit_len.as_u8();
         Self(u32::from_le_bytes(lit))
     }
@@ -516,7 +519,10 @@ impl LookupTableEntry2 {
     #[inline]
     pub fn into_lit_len(self) -> LitLen2 {
         let lit: [u8; 4] = self.0.to_le_bytes();
-        unsafe { core::mem::transmute(lit) }
+        unsafe {
+            // Safety: Believes that testing assures consistency
+            core::mem::transmute(lit)
+        }
     }
 }
 
@@ -566,9 +572,11 @@ fn literal2_repr() {
     assert_eq!(entry.bit_len(), Some(bits));
     assert_eq!(entry.into_lit_len(), lit_len);
 
-    let lit_len = LitLen2::EndOfBlock([0, 0, 0]);
     let bits = BitSize::Bit13;
-    let entry = LookupTableEntry2::new(lit_len, bits);
+    let entry = LookupTableEntry2::new(LitLen2::EndOfBlock([0x12, 0x34, 0x56]), bits);
     assert_eq!(entry.bit_len(), Some(bits));
-    assert_eq!(entry.into_lit_len(), lit_len);
+    assert_eq!(
+        entry.into_lit_len(),
+        LitLen2::EndOfBlock([0x78, 0x9a, 0xbc])
+    );
 }

@@ -5,7 +5,6 @@ edition = "2024"
 
 [dependencies]
 libm = { version = "0.2" }
-likely_stable = { version = "0.1" }
 
 [dev-dependencies]
 base64 = { version = "0.22" }

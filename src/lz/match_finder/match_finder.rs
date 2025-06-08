@@ -1,4 +1,4 @@
-//! Match Finder
+//! Match Finder using Suffix Array and LCP Array
 use crate::*;
 use core::ops::Range;
 use lcp::LcpArray;
@@ -10,6 +10,7 @@ mod sais;
 #[cfg(test)]
 mod tests;
 
+/// Match Finder using Suffix Array and LCP Array
 pub struct MatchFinder<'a> {
     s: &'a [u8],
     sa: SuffixArray,
@@ -92,29 +93,4 @@ impl<'a> MatchFinder<'a> {
     pub fn bucket(&self, byte: u8) -> Range<usize> {
         self.buckets[byte as usize] as usize..self.buckets[1 + byte as usize] as usize
     }
-
-    // pub fn matches<'b>(&'b self, pos: usize) -> Matches<'b> {
-    //     let literal = self.s[pos];
-    //     let range = self.bucket(literal);
-    //     let center = self.rev_sa[pos] as usize;
-
-    //     let matches = Matches {
-    //         finder: self,
-    //         range,
-    //         center,
-    //     };
-
-    //     matches
-    // }
 }
-
-// #[allow(unused)]
-// pub struct Matches<'a> {
-//     finder: &'a MatchFinder<'a>,
-//     range: Range<usize>,
-//     center: usize,
-// }
-
-// impl<'a> Matches<'a> {
-//     //
-// }

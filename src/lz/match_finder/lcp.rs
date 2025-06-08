@@ -34,6 +34,7 @@ impl LcpArray {
     }
 }
 
+/// naive implementation for testing purposes
 #[cfg(test)]
 pub struct LcpArrayNaive {
     pub sa: SuffixArray,
@@ -42,7 +43,6 @@ pub struct LcpArrayNaive {
 
 #[cfg(test)]
 impl LcpArrayNaive {
-    /// naive implementation for testing purposes
     pub fn new(s: &[u8]) -> Self {
         let sa = SuffixArray::naive(s);
 
