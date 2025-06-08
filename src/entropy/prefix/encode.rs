@@ -47,7 +47,7 @@ impl CanonicalPrefixCoder {
             input.sort_by(|a, b| a.0.cmp(&b.0));
             let mut result = Vec::new();
             for (index, item) in input.iter().enumerate() {
-                result.push((item.0, VarBitValue::new(BitSize::Bit1, index as u32)));
+                result.push((item.0, VarBitValue::with_bool(index != 0)));
             }
             return result;
         }
@@ -98,7 +98,9 @@ impl CanonicalPrefixCoder {
                     adj -= 1;
                 }
                 last_bits = bit_len;
-                prefix_codes.push(VarBitValue::new(BitSize::new(bit_len as u8).unwrap(), acc));
+                prefix_codes.push(
+                    VarBitValue::new_checked(BitSize::new(bit_len as u8).unwrap(), acc).unwrap(),
+                );
                 acc += 1;
             }
         }
@@ -174,7 +176,9 @@ impl CanonicalPrefixCoder {
                         let len = Self::rle_match_len(prev, &input, cursor, 6);
                         if len >= 3 {
                             output.push(VarBitValue::with_byte(REP3P2));
-                            output.push(VarBitValue::new(BitSize::Bit2, len as u32 - 3));
+                            output.push(
+                                VarBitValue::new_checked(BitSize::Bit2, len as u32 - 3).unwrap(),
+                            );
                             len
                         } else {
                             output.push(VarBitValue::with_byte(current));
@@ -190,11 +194,14 @@ impl CanonicalPrefixCoder {
                     prev = 0;
                     if len >= 11 {
                         output.push(VarBitValue::with_byte(REP11Z7));
-                        output.push(VarBitValue::new(BitSize::Bit7, len as u32 - 11));
+                        output.push(
+                            VarBitValue::new_checked(BitSize::Bit7, len as u32 - 11).unwrap(),
+                        );
                         len
                     } else if len >= 3 {
                         output.push(VarBitValue::with_byte(REP3Z3));
-                        output.push(VarBitValue::new(BitSize::Bit3, len as u32 - 3));
+                        output
+                            .push(VarBitValue::new_checked(BitSize::Bit3, len as u32 - 3).unwrap());
                         len
                     } else {
                         output.push(VarBitValue::with_byte(current));
@@ -273,10 +280,10 @@ impl CanonicalPrefixCoder {
         }
         let mut prefix_table = Vec::new();
         for &item in prefix_sizes.iter().take(1 + max_index) {
-            prefix_table.push(VarBitValue::new(
-                BitSize::Bit3,
-                item.map(|v| v as u32).unwrap_or_default(),
-            ));
+            prefix_table.push(
+                VarBitValue::new_checked(BitSize::Bit3, item.map(|v| v as u32).unwrap_or_default())
+                    .unwrap(),
+            );
         }
 
         Ok(MetaPrefixTable {

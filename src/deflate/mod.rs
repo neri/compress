@@ -41,7 +41,10 @@ macro_rules! var_uint32 {
                     if value > max_value {
                         return None;
                     }
-                    let trailing = size.map(|size| VarBitValue::new(size, value));
+                    let trailing = size.map(|size| unsafe {
+                        // Safety: The value is checked to be within the valid range
+                        VarBitValue::from_raw_parts(size, value)
+                    });
                     return Some(Self { leading, trailing });
                 }
                 None
@@ -56,9 +59,10 @@ macro_rules! var_uint32 {
             pub fn decode(leading: u8, reader: &mut BitStreamReader) -> Option<Self> {
                 let (ext_bit, _min_value) = *($base_table.get(leading as usize)?);
                 if let Some(ext_bit) = ext_bit {
-                    let trailing = reader
-                        .read_bits(ext_bit)
-                        .map(|v| VarBitValue::new(ext_bit, v))?;
+                    let trailing = reader.read_bits(ext_bit).map(|value| unsafe {
+                        // Safety: The value is guaranteed to be a valid bit size
+                        VarBitValue::from_raw_parts(ext_bit, value)
+                    })?;
                     Some(Self {
                         leading,
                         trailing: Some(trailing),

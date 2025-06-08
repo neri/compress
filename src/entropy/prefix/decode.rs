@@ -34,7 +34,7 @@ impl CanonicalPrefixDecoder {
 
     pub fn with_lengths(lengths: &[u8], is_lzss_lit: bool) -> Result<Self, DecodeError> {
         let prefix_table =
-            Self::reorder_prefix_table(lengths.iter().enumerate().map(|(i, &v)| (i, v)))?;
+            Self::reorder_prefix_table(lengths.iter().enumerate().map(|(i, &v)| (i, v)), true)?;
 
         if prefix_table.len() < 2 {
             // The prefix table must have at least two entries
@@ -85,7 +85,7 @@ impl CanonicalPrefixDecoder {
                     continue;
                 }
                 if let Some(entry) = LookupTableEntry::new(sym1, path1.size()) {
-                    let mut path = path1.reversed().value() as usize;
+                    let mut path = path1.value() as usize;
                     let delta = path1.size().power_of_two() as usize;
                     while path < max_peek_value {
                         decoder.lookup_table[path] = entry;
@@ -104,7 +104,6 @@ impl CanonicalPrefixDecoder {
                 .filter(|(sym, path)| {
                     *sym < 256 && path.size().as_usize() <= (peek_bits - min_bits)
                 })
-                .map(|(sym, path)| (*sym, path.reversed()))
                 .collect::<Vec<_>>();
             for (sym1, path1) in prefix_table.iter().copied() {
                 if path1.size().as_usize() > peek_bits {
@@ -112,8 +111,7 @@ impl CanonicalPrefixDecoder {
                 }
                 let entry =
                     LookupTableEntry2::new(LitLen2::from_lit_len(sym1 as u32), path1.size());
-                let rpath1 = path1.reversed();
-                let mut path = rpath1.value() as usize;
+                let mut path = path1.value() as usize;
                 let delta = path1.size().power_of_two() as usize;
                 while path < max_peek_value {
                     decoder.lookup_table2[path] = entry;
@@ -130,11 +128,10 @@ impl CanonicalPrefixDecoder {
                     if path_len.as_usize() > peek_bits {
                         continue;
                     }
-                    let sym2 = sym2 as u8;
+                    let sym2 = *sym2 as u8;
                     let entry = LookupTableEntry2::new(LitLen2::Double(sym1, sym2), path_len);
-                    let path2 = rpath1.value() as usize
-                        | (path2.value() as usize) << path1.size().as_usize();
-                    let mut path = path2;
+                    let path2 = path1.value() | path2.value() << path1.size().as_usize();
+                    let mut path = path2 as usize;
                     let delta = path_len.power_of_two() as usize;
                     while path < max_peek_value {
                         decoder.lookup_table2[path] = entry;
@@ -149,7 +146,7 @@ impl CanonicalPrefixDecoder {
 
     fn insert_node(&mut self, path: VarBitValue, value: u32) -> Result<(), DecodeError> {
         let mut index = 0;
-        let mut rpath = path.reversed().value();
+        let mut rpath = path.value();
         for _ in 1..path.size().as_usize() {
             let bit = rpath & 1;
             let mut next = self.decode_tree[index];
@@ -246,6 +243,7 @@ impl CanonicalPrefixDecoder {
 
     pub fn reorder_prefix_table<K>(
         prefixes: impl Iterator<Item = (K, u8)>,
+        needs_to_be_reversed: bool,
     ) -> Result<Vec<(K, VarBitValue)>, DecodeError>
     where
         K: Copy + Ord,
@@ -273,6 +271,12 @@ impl CanonicalPrefixDecoder {
                     .ok_or(DecodeError::InvalidData)?,
             ));
             acc += 1;
+        }
+
+        if needs_to_be_reversed {
+            prefix_table.iter_mut().for_each(|(_k, v)| {
+                v.reverse();
+            });
         }
 
         Ok(prefix_table)

@@ -149,40 +149,83 @@ pub const fn nearest_power_of_two(value: usize) -> usize {
 pub struct VarBitValue(u32);
 
 impl VarBitValue {
+    /// # Safety
+    ///
+    /// The `value` must fit within the `size`.
     #[inline]
-    pub fn new(size: BitSize, value: u32) -> Self {
-        Self((value & 0x00ff_ffff) | (size.as_u32() << 24))
+    pub const unsafe fn from_raw_parts(size: BitSize, value: u32) -> Self {
+        Self(value | (size.as_u32() << 24))
+    }
+
+    /// TODO: Remove this method in the future
+    // #[deprecated(
+    //     note = "Use `new_truncated` or `new_checked` instead. This method does not check the value range."
+    // )]
+    #[inline]
+    pub const fn new(size: BitSize, value: u32) -> Self {
+        unsafe { Self::from_raw_parts(size, value & 0x00ff_ffff) }
     }
 
     #[inline]
-    pub fn new_checked(size: BitSize, value: u32) -> Option<Self> {
-        ((value & size.mask()) == value).then(|| Self(value | (size.as_u32() << 24)))
+    pub const fn new_checked(size: BitSize, value: u32) -> Option<Self> {
+        if value <= size.mask() {
+            // Safety: The value is checked
+            Some(unsafe { Self::from_raw_parts(size, value) })
+        } else {
+            None
+        }
     }
 
     #[inline]
-    pub fn with_bool(value: bool) -> Self {
-        Self::new(BitSize::Bit1, value as u32)
+    pub const fn new_truncated(size: BitSize, value: u32) -> Self {
+        // Safety: The value is truncated.
+        unsafe { Self::from_raw_parts(size, value & size.mask()) }
     }
 
     #[inline]
-    pub fn with_nibble(value: Nibble) -> Self {
-        Self::new(BitSize::NIBBLE, value.as_u32())
+    pub const fn with_bool(value: bool) -> Self {
+        // Safety: The value is guaranteed to be 0 or 1
+        unsafe { Self::from_raw_parts(BitSize::Bit1, value as u32) }
     }
 
     #[inline]
-    pub fn with_byte(value: u8) -> Self {
-        Self::new(BitSize::Bit8, value as u32)
+    pub const fn with_nibble(value: Nibble) -> Self {
+        // Safety: The value is guaranteed to be in the range of Nibble
+        unsafe { Self::from_raw_parts(BitSize::NIBBLE, value.as_u32()) }
     }
 
     #[inline]
-    pub fn size(&self) -> BitSize {
+    pub const fn with_byte(value: u8) -> Self {
+        // Safety: The value is guaranteed to be in the range of u8
+        unsafe { Self::from_raw_parts(BitSize::Bit8, value as u32) }
+    }
+
+    #[inline]
+    pub const fn size(&self) -> BitSize {
         // Safety: The value is guaranteed at initialization
         unsafe { BitSize::new_unchecked((self.0 >> 24) as u8) }
     }
 
     #[inline]
-    pub fn value(&self) -> u32 {
+    pub const fn value(&self) -> u32 {
         self.0 & 0xff_ff_ff
+    }
+
+    #[inline]
+    pub const fn canonical_value(&self) -> u32 {
+        self.value() & self.size().mask()
+    }
+
+    pub const fn reversed(&self) -> Self {
+        let size = self.size();
+        let value = self.0.reverse_bits() >> (32 - size.as_usize());
+        // Safety: The value is guaranteed to be in the range of size.
+        unsafe { Self::from_raw_parts(size, value) }
+    }
+
+    #[inline]
+    pub fn reverse(&mut self) {
+        self.0 = self.reversed().0;
     }
 
     #[inline]
@@ -203,22 +246,6 @@ impl VarBitValue {
         T: IntoIterator<Item = VarBitValue>,
     {
         Self::to_vec(iter.into_iter())
-    }
-
-    pub fn reversed(&self) -> Self {
-        let size = self.size();
-        let mut value = 0;
-        let mut input = self.value();
-        for _ in 0..size.as_usize() {
-            value = (value << 1) | (input & 1);
-            input >>= 1;
-        }
-        Self::new(size, value)
-    }
-
-    #[inline]
-    pub fn reverse(&mut self) {
-        self.0 = self.reversed().0;
     }
 
     #[inline]
@@ -634,11 +661,11 @@ mod tests {
                     let pattern_n = !pattern & mask;
 
                     let mut writer = BitStreamWriter::new();
-                    writer.push(VarBitValue::new(padding_size, 0));
-                    writer.push(VarBitValue::new(value_size, pattern));
-                    writer.push(VarBitValue::new(padding_size, u32::MAX));
-                    writer.push(VarBitValue::new(value_size, pattern_n));
-                    writer.push(VarBitValue::new(padding_size, 0));
+                    writer.push(VarBitValue::new_checked(padding_size, 0).unwrap());
+                    writer.push(VarBitValue::new_truncated(value_size, pattern));
+                    writer.push(VarBitValue::new_truncated(padding_size, u32::MAX));
+                    writer.push(VarBitValue::new_truncated(value_size, pattern_n));
+                    writer.push(VarBitValue::new_checked(padding_size, 0).unwrap());
                     writer.push(VarBitValue::with_bool(true));
                     writer.extend_from_slice(tail);
                     let stream = writer.into_bytes();
@@ -718,7 +745,7 @@ mod tests {
     }
 
     #[test]
-    fn reverse() {
+    fn reverse_bits() {
         for (size, lhs, rhs) in [
             (8, 0x00, 0x00),
             (8, 0x03, 0xc0),
@@ -743,8 +770,8 @@ mod tests {
             (24, 0xffffff, 0xffffff),
         ] {
             let size = BitSize::new(size).unwrap();
-            let lhs = VarBitValue::new(size, lhs);
-            let rhs = VarBitValue::new(size, rhs);
+            let lhs = VarBitValue::new_checked(size, lhs).unwrap();
+            let rhs = VarBitValue::new_checked(size, rhs).unwrap();
 
             assert_eq!(lhs.reversed(), rhs);
             assert_eq!(lhs, rhs.reversed());

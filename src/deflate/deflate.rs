@@ -341,9 +341,11 @@ impl<'a> DeflateIrBlock<'a> {
             }
             let mut prefix_table_lit = Vec::with_capacity(288);
             prefix_table_lit.resize(288, None);
-            for (index, value) in
-                CanonicalPrefixDecoder::reorder_prefix_table(lengths_lit.into_iter().enumerate())
-                    .unwrap()
+            for (index, value) in CanonicalPrefixDecoder::reorder_prefix_table(
+                lengths_lit.into_iter().enumerate(),
+                false,
+            )
+            .unwrap()
             {
                 prefix_table_lit[index] = Some(value);
             }
