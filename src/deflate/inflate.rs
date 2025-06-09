@@ -92,7 +92,7 @@ pub fn inflate_in_place(input: &[u8], output: &mut [u8]) -> Result<(), DecodeErr
                     .read_bits(BitSize::Bit5)
                     .ok_or(DecodeError::UnexpectedEof)? as usize;
                 let mut prefix_table = Vec::new();
-                CanonicalPrefixDecoder::decode_prefix_table_deflate(
+                CanonicalPrefixDecoder::decode_length_table_deflate(
                     &mut reader,
                     &mut prefix_table,
                     hlit + hdist,
@@ -125,7 +125,7 @@ fn _decode_block(
         let decoder_dist = CanonicalPrefixDecoder::with_lengths(lengths_dist, false)?;
 
         while !output.is_eof() {
-            match decoder_lit.decode2(reader)? {
+            match decoder_lit.decode_lit(reader)? {
                 LitLen2::Single(lit) => {
                     // literal
                     let _ = output.push_literal(lit);

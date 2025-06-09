@@ -1,10 +1,19 @@
 //! Canonical Prefix Decoder
 
 use super::*;
-use crate::num::bits::{BitSize, BitStreamReader, VarBitValue};
-use crate::*;
+use crate::{
+    num::{
+        VarLenInteger,
+        bits::{BitSize, BitStreamReader},
+    },
+    *,
+};
 use core::cmp;
 
+/// The maximum number of bits to peek in the lookup table.
+///
+/// If this value is too small, faster lookup tables cannot be used, resulting in slower decoding.
+/// However, if this value is too large, memory usage will increase while speed may not improve.
 const MAX_LOOKUP_TABLE_BITS: usize = 12;
 
 #[allow(unused)]
@@ -32,9 +41,10 @@ impl CanonicalPrefixDecoder {
         }
     }
 
+    /// Creates a new `CanonicalPrefixDecoder` with the given lengths.
     pub fn with_lengths(lengths: &[u8], is_lzss_lit: bool) -> Result<Self, DecodeError> {
         let prefix_table =
-            Self::reorder_prefix_table(lengths.iter().enumerate().map(|(i, &v)| (i, v)), true)?;
+            Self::make_prefix_table(lengths.iter().enumerate().map(|(i, &v)| (i, v)), true)?;
 
         if prefix_table.len() < 2 {
             // The prefix table must have at least two entries
@@ -72,29 +82,11 @@ impl CanonicalPrefixDecoder {
 
         decoder.decode_tree.reserve(prefix_table.len() * 2);
         for (value, path) in prefix_table.iter().copied() {
-            decoder.insert_node(path, value as u32)?;
+            decoder.insert_node(path, value as u16)?;
         }
 
-        if !is_lzss_lit {
-            decoder
-                .lookup_table
-                .resize(1 << peek_bits, LookupTableEntry::EMPTY);
-            let max_peek_value = decoder.lookup_table.len();
-            for (sym1, path1) in prefix_table.iter().copied() {
-                if path1.size().as_usize() > peek_bits {
-                    continue;
-                }
-                if let Some(entry) = LookupTableEntry::new(sym1, path1.size()) {
-                    let mut path = path1.value() as usize;
-                    let delta = path1.size().power_of_two() as usize;
-                    while path < max_peek_value {
-                        decoder.lookup_table[path] = entry;
-                        path += delta;
-                    }
-                }
-            }
-        } else {
-            // For LZSS literal codes, we use a different lookup table
+        if is_lzss_lit {
+            // For LZSS literal and length codes
             decoder
                 .lookup_table2
                 .resize(1 << peek_bits, LookupTableEntry2::EMPTY);
@@ -139,12 +131,31 @@ impl CanonicalPrefixDecoder {
                     }
                 }
             }
+        } else {
+            // For other prefix codes
+            decoder
+                .lookup_table
+                .resize(1 << peek_bits, LookupTableEntry::EMPTY);
+            let max_peek_value = decoder.lookup_table.len();
+            for (sym1, path1) in prefix_table.iter().copied() {
+                if path1.size().as_usize() > peek_bits {
+                    continue;
+                }
+                if let Some(entry) = LookupTableEntry::new(sym1, path1.size()) {
+                    let mut path = path1.value() as usize;
+                    let delta = path1.size().power_of_two() as usize;
+                    while path < max_peek_value {
+                        decoder.lookup_table[path] = entry;
+                        path += delta;
+                    }
+                }
+            }
         }
 
         Ok(decoder)
     }
 
-    fn insert_node(&mut self, path: VarBitValue, value: u32) -> Result<(), DecodeError> {
+    fn insert_node(&mut self, path: VarLenInteger, value: u16) -> Result<(), DecodeError> {
         let mut index = 0;
         let mut rpath = path.value();
         for _ in 1..path.size().as_usize() {
@@ -175,9 +186,9 @@ impl CanonicalPrefixDecoder {
         }
         let bit = rpath & 1;
         if bit != 0 {
-            self.decode_tree[index] |= (DecodeTreeNode::LITERAL_FLAG | value) << 16;
+            self.decode_tree[index] |= (DecodeTreeNode::LITERAL_FLAG | value as u32) << 16;
         } else {
-            self.decode_tree[index] |= DecodeTreeNode::LITERAL_FLAG | value;
+            self.decode_tree[index] |= DecodeTreeNode::LITERAL_FLAG | value as u32;
         }
         Ok(())
     }
@@ -199,17 +210,19 @@ impl CanonicalPrefixDecoder {
                 .get(key as usize)
                 .ok_or(DecodeError::InvalidData)?;
             if let Some(bits) = entry.bit_len() {
-                let symbol1 = entry.symbol1();
                 reader.advance(bits);
-                return Ok(symbol1);
+                return Ok(entry.symbol1());
             }
         }
         self.decode_slow(reader)
     }
 
     /// Decode up to 2 literals using the lookup table.
+    ///
+    /// This function is fast but cannot process prefix code that is not in the lookup table,
+    /// so it falls back to the slow version.
     #[inline]
-    pub fn decode2(&self, reader: &mut BitStreamReader) -> Result<LitLen2, DecodeError> {
+    pub fn decode_lit(&self, reader: &mut BitStreamReader) -> Result<LitLen2, DecodeError> {
         if let Some(key) = reader.peek_bits(self.peek_bits) {
             let entry = self
                 .lookup_table2
@@ -220,7 +233,7 @@ impl CanonicalPrefixDecoder {
                 return Ok(entry.into_lit_len());
             }
         }
-        self.decode2_slow(reader)
+        self.decode_lit_slow(reader)
     }
 
     /// Decodes a symbol.
@@ -237,18 +250,24 @@ impl CanonicalPrefixDecoder {
         }
     }
 
-    pub fn decode2_slow(&self, reader: &mut BitStreamReader) -> Result<LitLen2, DecodeError> {
+    pub fn decode_lit_slow(&self, reader: &mut BitStreamReader) -> Result<LitLen2, DecodeError> {
         self.decode_slow(reader).map(|v| LitLen2::from_lit_len(v))
     }
 
-    pub fn reorder_prefix_table<K>(
-        prefixes: impl Iterator<Item = (K, u8)>,
-        needs_to_be_reversed: bool,
-    ) -> Result<Vec<(K, VarBitValue)>, DecodeError>
+    /// Create a canonical prefix code table from a length table.
+    ///
+    /// This function takes an iterator of (key, length) pairs, where `key` is the symbol and `length` is the bit length.
+    /// It returns a vector of (key, VarLenInteger) pairs, where `VarLenInteger` is the canonical prefix code for the symbol.
+    ///
+    /// Setting the parameter `reversed` to true reverses the bit order of the prefix code and makes suffix matching possible.
+    pub fn make_prefix_table<K>(
+        lengths: impl Iterator<Item = (K, u8)>,
+        reversed: bool,
+    ) -> Result<Vec<(K, VarLenInteger)>, DecodeError>
     where
         K: Copy + Ord,
     {
-        let mut prefixes = prefixes.filter(|(_k, v)| *v > 0).collect::<Vec<_>>();
+        let mut prefixes = lengths.filter(|(_k, v)| *v > 0).collect::<Vec<_>>();
         prefixes.sort_by(|a, b| match a.1.cmp(&b.1) {
             cmp::Ordering::Equal => a.0.cmp(&b.0),
             ord => ord,
@@ -267,13 +286,13 @@ impl CanonicalPrefixDecoder {
             last_bits = bits;
             prefix_table.push((
                 item.0,
-                VarBitValue::new_checked(BitSize::new(bits).unwrap(), acc)
+                VarLenInteger::new_checked(BitSize::new(bits).unwrap(), acc)
                     .ok_or(DecodeError::InvalidData)?,
             ));
             acc += 1;
         }
 
-        if needs_to_be_reversed {
+        if reversed {
             prefix_table.iter_mut().for_each(|(_k, v)| {
                 v.reverse();
             });
@@ -282,7 +301,7 @@ impl CanonicalPrefixDecoder {
         Ok(prefix_table)
     }
 
-    pub fn decode_prefix_table_deflate(
+    pub fn decode_length_table_deflate(
         reader: &mut BitStreamReader,
         output: &mut Vec<u8>,
         output_size: usize,
@@ -344,7 +363,7 @@ impl CanonicalPrefixDecoder {
         Ok(())
     }
 
-    pub fn decode_prefix_table_webp(
+    pub fn decode_length_table_webp(
         reader: &mut BitStreamReader,
         output: &mut Vec<u8>,
         output_size: usize,
@@ -448,9 +467,9 @@ pub enum ChildNode<'a> {
 /// A lookup table entry for the canonical prefix decoder.
 ///
 /// format:
-/// * bit0-3 bit lengths to advance (1-15)
-/// * bit4-6 reserved, mbz
-/// * bit7-15 symbol1
+/// * bit 0-3: bit lengths to advance (1-15)
+/// * bit 4-6: reserved, mbz
+/// * bit 7-15: symbol1
 ///
 #[repr(transparent)]
 #[derive(Debug, Clone, Copy)]
@@ -481,10 +500,11 @@ impl LookupTableEntry {
 /// A lookup table entry for the literal 2 decoder.
 ///
 /// format:
-/// * bit0-7 literal type (0-3)
-/// * bit8-15 symbol1
-/// * bit16-23 symbol2
-/// * bit24-31 number of bits to advance (1-24)
+/// * bit 0-7: literal type (variant of LitLen2)
+/// * bit 8-15: symbol1
+/// * bit 16-23: symbol2
+/// * bit 24-31: number of bits to advance
+///
 #[repr(transparent)]
 #[derive(Debug, Clone, Copy, Default)]
 pub struct LookupTableEntry2(u32);
@@ -538,7 +558,7 @@ impl LitLen2 {
         } else if value == 256 {
             Self::EndOfBlock([0, 0, 0])
         } else {
-            Self::Length((value - 257) as u8)
+            Self::Length((value.wrapping_sub(1) & 0xff) as u8)
         }
     }
 }

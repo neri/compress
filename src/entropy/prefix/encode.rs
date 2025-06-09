@@ -1,9 +1,10 @@
 ///! Canonical Prefix Coder
 use super::*;
-use crate::num::Nibble;
-use crate::num::bits::{BitSize, VarBitValue};
-use crate::stats::*;
-use crate::*;
+use crate::{
+    num::{bits::BitSize, *},
+    stats::*,
+    *,
+};
 use core::cmp;
 use core::convert::Infallible;
 
@@ -14,7 +15,7 @@ impl CanonicalPrefixCoder {
         freq_table: &[usize],
         max_len: BitSize,
         min_size: usize,
-    ) -> Vec<Option<VarBitValue>> {
+    ) -> Vec<Option<VarLenInteger>> {
         let mut freq_table = freq_table
             .iter()
             .enumerate()
@@ -38,7 +39,7 @@ impl CanonicalPrefixCoder {
         freq_table: &[(K, usize)],
         max_len: BitSize,
         ref_tree: Option<&mut Vec<HuffmanTreeNode<K>>>,
-    ) -> Vec<(K, VarBitValue)>
+    ) -> Vec<(K, VarLenInteger)>
     where
         K: Copy + Ord,
     {
@@ -47,7 +48,7 @@ impl CanonicalPrefixCoder {
             input.sort_by(|a, b| a.0.cmp(&b.0));
             let mut result = Vec::new();
             for (index, item) in input.iter().enumerate() {
-                result.push((item.0, VarBitValue::with_bool(index != 0)));
+                result.push((item.0, VarLenInteger::with_bool(index != 0)));
             }
             return result;
         }
@@ -89,7 +90,7 @@ impl CanonicalPrefixCoder {
 
         let mut acc = 0;
         let mut last_bits = 0;
-        let mut prefix_codes: Vec<VarBitValue> = Vec::new();
+        let mut prefix_codes: Vec<VarLenInteger> = Vec::new();
         for (bit_len, count) in prefix_lengths.into_iter().enumerate() {
             for _ in 0..count {
                 let mut adj = bit_len;
@@ -99,7 +100,7 @@ impl CanonicalPrefixCoder {
                 }
                 last_bits = bit_len;
                 prefix_codes.push(
-                    VarBitValue::new_checked(BitSize::new(bit_len as u8).unwrap(), acc).unwrap(),
+                    VarLenInteger::new_checked(BitSize::new(bit_len as u8).unwrap(), acc).unwrap(),
                 );
                 acc += 1;
             }
@@ -164,7 +165,7 @@ impl CanonicalPrefixCoder {
         max_len
     }
 
-    fn rle_compress_prefix_table(input: &[u8]) -> Vec<VarBitValue> {
+    fn rle_compress_prefix_table(input: &[u8]) -> Vec<VarLenInteger> {
         let mut output = Vec::new();
         let mut cursor = 0;
         let mut prev = 0; //8;
@@ -175,17 +176,17 @@ impl CanonicalPrefixCoder {
                     if current == prev {
                         let len = Self::rle_match_len(prev, &input, cursor, 6);
                         if len >= 3 {
-                            output.push(VarBitValue::with_byte(REP3P2));
+                            output.push(VarLenInteger::with_byte(REP3P2));
                             output.push(
-                                VarBitValue::new_checked(BitSize::Bit2, len as u32 - 3).unwrap(),
+                                VarLenInteger::new_checked(BitSize::Bit2, len as u32 - 3).unwrap(),
                             );
                             len
                         } else {
-                            output.push(VarBitValue::with_byte(current));
+                            output.push(VarLenInteger::with_byte(current));
                             1
                         }
                     } else {
-                        output.push(VarBitValue::with_byte(current));
+                        output.push(VarLenInteger::with_byte(current));
                         prev = current;
                         1
                     }
@@ -193,18 +194,19 @@ impl CanonicalPrefixCoder {
                     let len = Self::rle_match_len(0, &input, cursor, 138);
                     prev = 0;
                     if len >= 11 {
-                        output.push(VarBitValue::with_byte(REP11Z7));
+                        output.push(VarLenInteger::with_byte(REP11Z7));
                         output.push(
-                            VarBitValue::new_checked(BitSize::Bit7, len as u32 - 11).unwrap(),
+                            VarLenInteger::new_checked(BitSize::Bit7, len as u32 - 11).unwrap(),
                         );
                         len
                     } else if len >= 3 {
-                        output.push(VarBitValue::with_byte(REP3Z3));
-                        output
-                            .push(VarBitValue::new_checked(BitSize::Bit3, len as u32 - 3).unwrap());
+                        output.push(VarLenInteger::with_byte(REP3Z3));
+                        output.push(
+                            VarLenInteger::new_checked(BitSize::Bit3, len as u32 - 3).unwrap(),
+                        );
                         len
                     } else {
-                        output.push(VarBitValue::with_byte(current));
+                        output.push(VarLenInteger::with_byte(current));
                         1
                     }
                 }
@@ -214,7 +216,7 @@ impl CanonicalPrefixCoder {
     }
 
     pub fn encode_single_prefix_table(
-        input: &[Option<VarBitValue>],
+        input: &[Option<VarLenInteger>],
         permutation_flavor: PermutationFlavor,
     ) -> Result<MetaPrefixTable, Infallible> {
         let table0 = input
@@ -281,8 +283,11 @@ impl CanonicalPrefixCoder {
         let mut prefix_table = Vec::new();
         for &item in prefix_sizes.iter().take(1 + max_index) {
             prefix_table.push(
-                VarBitValue::new_checked(BitSize::Bit3, item.map(|v| v as u32).unwrap_or_default())
-                    .unwrap(),
+                VarLenInteger::new_checked(
+                    BitSize::Bit3,
+                    item.map(|v| v as u32).unwrap_or_default(),
+                )
+                .unwrap(),
             );
         }
 
@@ -300,9 +305,9 @@ impl CanonicalPrefixCoder {
 pub struct MetaPrefixTable {
     pub hlits: Vec<usize>,
     pub hclen: Nibble,
-    pub prefix_table: Vec<VarBitValue>,
-    pub content: Vec<VarBitValue>,
-    pub intermediate_tables: Vec<Vec<VarBitValue>>,
+    pub prefix_table: Vec<VarLenInteger>,
+    pub content: Vec<VarLenInteger>,
+    pub intermediate_tables: Vec<Vec<VarLenInteger>>,
 }
 
 pub enum HuffmanTreeNode<K> {

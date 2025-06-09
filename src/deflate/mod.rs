@@ -2,8 +2,13 @@
 //!
 //! See also: <https://www.ietf.org/rfc/rfc1951.txt>
 
-use crate::num::bits::{BitSize, BitStreamReader, VarBitValue};
-use crate::*;
+use crate::{
+    num::{
+        VarLenInteger,
+        bits::{BitSize, BitStreamReader},
+    },
+    *,
+};
 
 #[cfg(test)]
 mod tests;
@@ -19,7 +24,7 @@ macro_rules! var_uint32 {
     ($class_name:ident, $base_table:ident, $min_value:expr, $max_value:expr) => {
         #[derive(Debug, PartialEq)]
         pub struct $class_name {
-            pub trailing: Option<VarBitValue>,
+            pub trailing: Option<VarLenInteger>,
             pub leading: u8,
         }
 
@@ -43,7 +48,7 @@ macro_rules! var_uint32 {
                     }
                     let trailing = size.map(|size| unsafe {
                         // Safety: The value is checked to be within the valid range
-                        VarBitValue::from_raw_parts(size, value)
+                        VarLenInteger::from_raw_parts(size, value)
                     });
                     return Some(Self { leading, trailing });
                 }
@@ -61,7 +66,7 @@ macro_rules! var_uint32 {
                 if let Some(ext_bit) = ext_bit {
                     let trailing = reader.read_bits(ext_bit).map(|value| unsafe {
                         // Safety: The value is guaranteed to be a valid bit size
-                        VarBitValue::from_raw_parts(ext_bit, value)
+                        VarLenInteger::from_raw_parts(ext_bit, value)
                     })?;
                     Some(Self {
                         leading,
@@ -87,7 +92,7 @@ macro_rules! var_uint32 {
             }
 
             #[inline]
-            pub const fn from_raw(leading: u8, trailing: Option<VarBitValue>) -> Self {
+            pub const fn from_raw(leading: u8, trailing: Option<VarLenInteger>) -> Self {
                 Self { leading, trailing }
             }
 
@@ -97,7 +102,7 @@ macro_rules! var_uint32 {
             }
 
             #[inline]
-            pub const fn trailing(&self) -> Option<VarBitValue> {
+            pub const fn trailing(&self) -> Option<VarLenInteger> {
                 self.trailing
             }
 

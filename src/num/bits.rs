@@ -1,4 +1,5 @@
 //! Bit manipulation utilities
+use super::VarLenInteger;
 use crate::*;
 use core::fmt;
 use core::mem::transmute;
@@ -143,149 +144,6 @@ pub const fn nearest_power_of_two(value: usize) -> usize {
     if value >= threshold { next } else { next >> 1 }
 }
 
-/// A Variable-length bit value
-#[repr(transparent)]
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct VarBitValue(u32);
-
-impl VarBitValue {
-    /// # Safety
-    ///
-    /// The `value` must fit within the `size`.
-    #[inline]
-    pub const unsafe fn from_raw_parts(size: BitSize, value: u32) -> Self {
-        Self(value | (size.as_u32() << 24))
-    }
-
-    /// TODO: Remove this method in the future
-    // #[deprecated(
-    //     note = "Use `new_truncated` or `new_checked` instead. This method does not check the value range."
-    // )]
-    #[inline]
-    pub const fn new(size: BitSize, value: u32) -> Self {
-        unsafe { Self::from_raw_parts(size, value & 0x00ff_ffff) }
-    }
-
-    #[inline]
-    pub const fn new_checked(size: BitSize, value: u32) -> Option<Self> {
-        if value <= size.mask() {
-            // Safety: The value is checked
-            Some(unsafe { Self::from_raw_parts(size, value) })
-        } else {
-            None
-        }
-    }
-
-    #[inline]
-    pub const fn new_truncated(size: BitSize, value: u32) -> Self {
-        // Safety: The value is truncated.
-        unsafe { Self::from_raw_parts(size, value & size.mask()) }
-    }
-
-    #[inline]
-    pub const fn with_bool(value: bool) -> Self {
-        // Safety: The value is guaranteed to be 0 or 1
-        unsafe { Self::from_raw_parts(BitSize::Bit1, value as u32) }
-    }
-
-    #[inline]
-    pub const fn with_nibble(value: Nibble) -> Self {
-        // Safety: The value is guaranteed to be in the range of Nibble
-        unsafe { Self::from_raw_parts(BitSize::NIBBLE, value.as_u32()) }
-    }
-
-    #[inline]
-    pub const fn with_byte(value: u8) -> Self {
-        // Safety: The value is guaranteed to be in the range of u8
-        unsafe { Self::from_raw_parts(BitSize::Bit8, value as u32) }
-    }
-
-    #[inline]
-    pub const fn size(&self) -> BitSize {
-        // Safety: The value is guaranteed at initialization
-        unsafe { BitSize::new_unchecked((self.0 >> 24) as u8) }
-    }
-
-    #[inline]
-    pub const fn value(&self) -> u32 {
-        self.0 & 0xff_ff_ff
-    }
-
-    #[inline]
-    pub const fn canonical_value(&self) -> u32 {
-        self.value() & self.size().mask()
-    }
-
-    pub const fn reversed(&self) -> Self {
-        let size = self.size();
-        let value = self.0.reverse_bits() >> (32 - size.as_usize());
-        // Safety: The value is guaranteed to be in the range of size.
-        unsafe { Self::from_raw_parts(size, value) }
-    }
-
-    #[inline]
-    pub fn reverse(&mut self) {
-        self.0 = self.reversed().0;
-    }
-
-    #[inline]
-    pub fn to_vec<T>(iter: T) -> Vec<u8>
-    where
-        T: Iterator<Item = VarBitValue>,
-    {
-        let mut bs = BitStreamWriter::new();
-        for ext_bit in iter {
-            bs.push(ext_bit);
-        }
-        bs.into_bytes()
-    }
-
-    #[inline]
-    pub fn into_vec<T>(iter: T) -> Vec<u8>
-    where
-        T: IntoIterator<Item = VarBitValue>,
-    {
-        Self::to_vec(iter.into_iter())
-    }
-
-    #[inline]
-    pub fn total_len<'a, T>(iter: T) -> usize
-    where
-        T: Iterator<Item = &'a Option<VarBitValue>>,
-    {
-        (Self::total_bit_count(iter) + 7) / 8
-    }
-
-    #[inline]
-    pub fn total_bit_count<'a, T>(iter: T) -> usize
-    where
-        T: Iterator<Item = &'a Option<VarBitValue>>,
-    {
-        iter.fold(0, |a, v| match v {
-            Some(v) => a + v.size() as usize,
-            None => a,
-        })
-    }
-}
-
-impl fmt::Display for VarBitValue {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let size = self.size().as_usize();
-        if let Some(width) = f.width() {
-            if width > size {
-                for _ in 0..width - size {
-                    write!(f, " ")?;
-                }
-            }
-        }
-        for i in (0..size).rev() {
-            let bit = self.value().wrapping_shr(i as u32) & 1;
-            write!(f, "{}", bit)?;
-        }
-        Ok(())
-    }
-}
-
 pub struct BitStreamWriter {
     buf: Vec<u8>,
     acc: u8,
@@ -309,27 +167,27 @@ impl BitStreamWriter {
 
     #[inline]
     pub fn push_bool(&mut self, value: bool) {
-        self.push(VarBitValue::with_bool(value));
+        self.push(VarLenInteger::with_bool(value));
     }
 
     #[inline]
     pub fn push_byte(&mut self, value: u8) {
-        self.push(VarBitValue::with_byte(value))
+        self.push(VarLenInteger::with_byte(value))
     }
 
     #[inline]
     pub fn push_nibble(&mut self, value: Nibble) {
-        self.push(VarBitValue::with_nibble(value))
+        self.push(VarLenInteger::with_nibble(value))
     }
 
     #[inline]
-    pub fn push_slice(&mut self, value: &[VarBitValue]) {
+    pub fn push_slice(&mut self, value: &[VarLenInteger]) {
         for &item in value.iter() {
             self.push(item);
         }
     }
 
-    pub fn push(&mut self, value: VarBitValue) {
+    pub fn push(&mut self, value: VarLenInteger) {
         let lowest_bits = 8 - self.bit_position;
         let lowest_bit_mask = ((1u32 << value.size().as_u8().min(lowest_bits)) - 1) as u8;
         let mut acc = self.acc | ((value.value() as u8 & lowest_bit_mask) << self.bit_position);
@@ -418,16 +276,16 @@ impl Write<&[u8]> for BitStreamWriter {
     }
 }
 
-impl Write<VarBitValue> for BitStreamWriter {
+impl Write<VarLenInteger> for BitStreamWriter {
     #[inline]
-    fn write(&mut self, value: VarBitValue) {
+    fn write(&mut self, value: VarLenInteger) {
         self.push(value);
     }
 }
 
-impl Write<&[VarBitValue]> for BitStreamWriter {
+impl Write<&[VarLenInteger]> for BitStreamWriter {
     #[inline]
-    fn write(&mut self, value: &[VarBitValue]) {
+    fn write(&mut self, value: &[VarLenInteger]) {
         self.push_slice(value);
     }
 }
@@ -661,12 +519,12 @@ mod tests {
                     let pattern_n = !pattern & mask;
 
                     let mut writer = BitStreamWriter::new();
-                    writer.push(VarBitValue::new_checked(padding_size, 0).unwrap());
-                    writer.push(VarBitValue::new_truncated(value_size, pattern));
-                    writer.push(VarBitValue::new_truncated(padding_size, u32::MAX));
-                    writer.push(VarBitValue::new_truncated(value_size, pattern_n));
-                    writer.push(VarBitValue::new_checked(padding_size, 0).unwrap());
-                    writer.push(VarBitValue::with_bool(true));
+                    writer.push(VarLenInteger::new_checked(padding_size, 0).unwrap());
+                    writer.push(VarLenInteger::new_truncated(value_size, pattern));
+                    writer.push(VarLenInteger::new_truncated(padding_size, u32::MAX));
+                    writer.push(VarLenInteger::new_truncated(value_size, pattern_n));
+                    writer.push(VarLenInteger::new_checked(padding_size, 0).unwrap());
+                    writer.push(VarLenInteger::with_bool(true));
                     writer.extend_from_slice(tail);
                     let stream = writer.into_bytes();
                     println!("DATA: {:02x?}", &stream);
@@ -741,43 +599,6 @@ mod tests {
             let test = nearest_power_of_two(value);
 
             assert_eq!(test, expected);
-        }
-    }
-
-    #[test]
-    fn reverse_bits() {
-        for (size, lhs, rhs) in [
-            (8, 0x00, 0x00),
-            (8, 0x03, 0xc0),
-            (8, 0x55, 0xaa),
-            (8, 0xc0, 0x03),
-            (8, 0xf0, 0x0f),
-            (8, 0xff, 0xff),
-            (16, 0x0000, 0x0000),
-            (16, 0x00ff, 0xff00),
-            (16, 0x0f0f, 0xf0f0),
-            (16, 0x1234, 0x2c48),
-            (16, 0x3333, 0xcccc),
-            (16, 0x5555, 0xaaaa),
-            (16, 0xffff, 0xffff),
-            (24, 0x000000, 0x000000),
-            (24, 0x123456, 0x6a2c48),
-            (24, 0x555555, 0xaaaaaa),
-            (24, 0xcccccc, 0x333333),
-            (24, 0xff0000, 0x0000ff),
-            (24, 0xfff000, 0x000fff),
-            (24, 0xffff00, 0x00ffff),
-            (24, 0xffffff, 0xffffff),
-        ] {
-            let size = BitSize::new(size).unwrap();
-            let lhs = VarBitValue::new_checked(size, lhs).unwrap();
-            let rhs = VarBitValue::new_checked(size, rhs).unwrap();
-
-            assert_eq!(lhs.reversed(), rhs);
-            assert_eq!(lhs, rhs.reversed());
-
-            assert_eq!(lhs.reversed().reversed(), lhs);
-            assert_eq!(rhs.reversed().reversed(), rhs);
         }
     }
 

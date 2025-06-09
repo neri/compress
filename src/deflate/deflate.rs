@@ -158,9 +158,9 @@ impl DeflateLZIR {
     }
 
     #[inline]
-    pub fn length_extra_bits(&self) -> Option<VarBitValue> {
+    pub fn length_extra_bits(&self) -> Option<VarLenInteger> {
         self.length_extra_bit_size()
-            .map(|size| VarBitValue::new(size, self.length_extra_bits_raw()))
+            .map(|size| VarLenInteger::new(size, self.length_extra_bits_raw()))
     }
 
     #[inline]
@@ -172,9 +172,9 @@ impl DeflateLZIR {
     }
 
     #[inline]
-    pub fn distance_extra_bits(&self) -> Option<VarBitValue> {
+    pub fn distance_extra_bits(&self) -> Option<VarLenInteger> {
         self.distance_extra_bit_size()
-            .map(|size| VarBitValue::new(size, self.distance_extra_bits_raw()))
+            .map(|size| VarLenInteger::new(size, self.distance_extra_bits_raw()))
     }
 }
 
@@ -341,7 +341,7 @@ impl<'a> DeflateIrBlock<'a> {
             }
             let mut prefix_table_lit = Vec::with_capacity(288);
             prefix_table_lit.resize(288, None);
-            for (index, value) in CanonicalPrefixDecoder::reorder_prefix_table(
+            for (index, value) in CanonicalPrefixDecoder::make_prefix_table(
                 lengths_lit.into_iter().enumerate(),
                 false,
             )
@@ -351,7 +351,7 @@ impl<'a> DeflateIrBlock<'a> {
             }
 
             let prefix_table_dist = (0..30)
-                .map(|v| Some(VarBitValue::new(BitSize::Bit5, v as u32)))
+                .map(|v| Some(VarLenInteger::new(BitSize::Bit5, v as u32)))
                 .collect::<Vec<_>>();
 
             (prefix_table_lit, prefix_table_dist)
@@ -364,10 +364,10 @@ impl<'a> DeflateIrBlock<'a> {
             // fix prefix table for dist
             let prefix_table_dist_count = prefix_table_dist.iter().filter(|v| v.is_some()).count();
             if prefix_table_dist_count == 0 {
-                prefix_table_dist.push(Some(VarBitValue::with_bool(true)));
-                prefix_table_dist.push(Some(VarBitValue::with_bool(true)));
+                prefix_table_dist.push(Some(VarLenInteger::with_bool(true)));
+                prefix_table_dist.push(Some(VarLenInteger::with_bool(true)));
             } else if prefix_table_dist_count < 2 {
-                prefix_table_dist.push(Some(VarBitValue::with_bool(true)));
+                prefix_table_dist.push(Some(VarLenInteger::with_bool(true)));
             }
 
             (prefix_table_lit, prefix_table_dist)
@@ -375,7 +375,7 @@ impl<'a> DeflateIrBlock<'a> {
 
         output.write(self.is_final()); // bfinal
         if use_static {
-            output.write(VarBitValue::new(BitSize::Bit2, 0b01)); // btype
+            output.write(VarLenInteger::new(BitSize::Bit2, 0b01)); // btype
         } else {
             let prefix_tables = prefix_table_lit
                 .iter()
@@ -388,12 +388,12 @@ impl<'a> DeflateIrBlock<'a> {
             )
             .unwrap();
 
-            output.write(VarBitValue::new(BitSize::Bit2, 0b10)); // btype
-            output.write(VarBitValue::new(
+            output.write(VarLenInteger::new(BitSize::Bit2, 0b10)); // btype
+            output.write(VarLenInteger::new(
                 BitSize::Bit5,
                 prefix_table_lit.len() as u32 - 257,
             )); // hlit
-            output.write(VarBitValue::new(
+            output.write(VarLenInteger::new(
                 BitSize::Bit5,
                 prefix_table_dist.len() as u32 - 1,
             )); // hdist
