@@ -28,7 +28,7 @@ use crate::*;
 use alloc::{format, string::String, vec::Vec};
 
 mod s7s;
-use s7s::S7s;
+pub use s7s::S7s;
 
 const LZ_MAX_LEN: usize = 0x80_00_00;
 const LZ_MAX_DISTANCE: usize = 0x02_00_00;
