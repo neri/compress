@@ -1,5 +1,5 @@
 //! Match Finder using Suffix Array and LCP Array
-use crate::*;
+use crate::{lz::Match, *};
 use core::ops::Range;
 use lcp::LcpArray;
 use sais::SuffixArray;
@@ -92,5 +92,112 @@ impl<'a> MatchFinder<'a> {
     #[inline]
     pub fn bucket(&self, byte: u8) -> Range<usize> {
         self.buckets[byte as usize] as usize..self.buckets[1 + byte as usize] as usize
+    }
+
+    pub fn matches<'b>(&'b self, pos: usize, min_len: usize, max_distance: usize) -> Match {
+        let min_offset = pos.saturating_sub(max_distance);
+        let sa_base_index = self.rev_sa[pos] as usize;
+        let takes = 16;
+
+        let iter1 = (self.lcp().get(sa_base_index)).map(|_| {
+            self.lcp()
+                .iter()
+                .zip(self.sa().iter().skip(1))
+                .skip(sa_base_index)
+                .take(takes)
+        });
+        let iter2 = (sa_base_index > 0).then(|| {
+            let lcp2 = &self.lcp()[..sa_base_index];
+            let sa2 = &self.sa()[..sa_base_index];
+            lcp2.iter().zip(sa2.iter()).rev().take(takes)
+        });
+
+        let mut matches = Match::ZERO;
+
+        let mut kernel = |lcp: &u32, offset: &u32, min_len: usize, lcp_limit: &mut usize| -> bool {
+            let lcp = *lcp as usize;
+            let offset = *offset as usize;
+            if lcp < min_len {
+                return false;
+            }
+            if offset >= min_offset && offset < pos {
+                let len = (*lcp_limit).min(lcp);
+                let distance = pos - offset;
+                if matches.is_zero() {
+                    matches = Match::new(len, distance);
+                } else if matches.len > len {
+                    return false;
+                } else if matches.len < len {
+                    matches = Match::new(len, distance);
+                } else if matches.len == len && matches.distance > distance {
+                    matches.distance = distance;
+                }
+            }
+            *lcp_limit = (*lcp_limit).min(lcp);
+            true
+        };
+
+        let mut lcp_limit1 = usize::MAX;
+        let mut lcp_limit2 = usize::MAX;
+
+        match (iter1, iter2) {
+            (None, None) => {
+                // No iterators available
+                return Match::ZERO;
+            }
+            (Some(mut iter1), None) => {
+                while let Some((lcp, offset)) = iter1.next() {
+                    if !kernel(lcp, offset, min_len, &mut lcp_limit1) {
+                        break;
+                    }
+                }
+                return matches;
+            }
+            (None, Some(mut iter2)) => {
+                while let Some((lcp, offset)) = iter2.next() {
+                    if !kernel(lcp, offset, min_len, &mut lcp_limit2) {
+                        break;
+                    }
+                }
+                return matches;
+            }
+            (Some(mut iter1), Some(mut iter2)) => {
+                let (iter1, iter2) = loop {
+                    if let Some((lcp, offset)) = iter1.next() {
+                        if !kernel(lcp, offset, min_len, &mut lcp_limit1) {
+                            break (None, Some(iter2));
+                        }
+                    } else {
+                        break (None, Some(iter2));
+                    }
+                    if let Some((lcp, offset)) = iter2.next() {
+                        if !kernel(lcp, offset, min_len, &mut lcp_limit2) {
+                            break (Some(iter1), None);
+                        }
+                    } else {
+                        break (Some(iter1), None);
+                    }
+                };
+                match (iter1, iter2) {
+                    (Some(mut iter1), None) => {
+                        while let Some((lcp, offset)) = iter1.next() {
+                            if !kernel(lcp, offset, min_len, &mut lcp_limit1) {
+                                break;
+                            }
+                        }
+                        return matches;
+                    }
+                    (None, Some(mut iter2)) => {
+                        while let Some((lcp, offset)) = iter2.next() {
+                            if !kernel(lcp, offset, min_len, &mut lcp_limit2) {
+                                break;
+                            }
+                        }
+                        return matches;
+                    }
+                    _ => unreachable!(),
+                }
+            }
+        }
     }
 }

@@ -8,7 +8,7 @@ libm = { version = "0.2" }
 
 [dev-dependencies]
 base64 = { version = "0.22" }
-rand = {version = "0.9.0"}
+rand = {version = "0.9"}
 
 # [features]
 # default = ["std"]

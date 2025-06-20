@@ -5,3 +5,4 @@ edition = "2024"
 
 [dependencies]
 compress = {path = "../../"}
+rand = {version = "0.9"}

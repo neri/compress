@@ -30,8 +30,17 @@ fn fib() {
 }
 
 #[test]
-fn random() {
-    let s = random_bytes(0x55, 0xaa, 0x1000);
+fn lcp_random_ab() {
+    let s = random_ab(0x55, 0xaa, 0x1000);
+    let lcp = MatchFinder::new(&s);
+    let naive = LcpArrayNaive::new(&s);
+    assert_eq!(lcp.sa(), naive.sa());
+    assert_eq!(lcp.lcp(), naive.lcp());
+}
+
+#[test]
+fn lcp_random_alphabet() {
+    let s = random_alphabet(b'A', b'Z', 0x1000);
     let lcp = MatchFinder::new(&s);
     let naive = LcpArrayNaive::new(&s);
     assert_eq!(lcp.sa(), naive.sa());
@@ -41,6 +50,8 @@ fn random() {
 #[allow(unused)]
 fn print_sa_lcp(s: &[u8], lcp: &MatchFinder) {
     println!("input: {:?}", unsafe { core::str::from_utf8_unchecked(s) });
+
+    #[allow(dead_code)]
     fn print_suffix(s: &[u8], suffix: u32) {
         let Some(s) = s.get(suffix as usize..) else {
             unreachable!();
@@ -57,10 +68,10 @@ fn print_sa_lcp(s: &[u8], lcp: &MatchFinder) {
         }
     }
 
-    for (index, &rank) in lcp.rev_sa().iter().enumerate() {
-        let suffix = lcp.sa()[rank as usize];
-        let lcp = lcp.lcp()[rank as usize];
-        println!("rank[{:3}] = {:3} {:3}", index, rank, lcp);
-        assert_eq!(suffix, index as u32);
-    }
+    // for (index, &rank) in lcp.rev_sa().iter().enumerate() {
+    //     let suffix = lcp.sa()[rank as usize];
+    //     let lcp = lcp.lcp()[rank as usize];
+    //     println!("rank[{:3}] = {:3} {:3}", index, rank, lcp);
+    //     assert_eq!(suffix, index as u32);
+    // }
 }

@@ -1529,8 +1529,20 @@ fn deflate_fib() {
 }
 
 #[test]
-fn deflate_random() {
-    let input = random_bytes(0x55, 0xaa, 0x10000);
+fn deflate_random_ab() {
+    let input = random_ab(0x55, 0xaa, 0x10000);
+    let encoded1 = deflate_zlib(&input, CompressionLevel::Fastest, None).unwrap();
+    let decoded = inflate(&encoded1, input.len()).unwrap();
+    assert_eq_array(&decoded, &input);
+
+    let encoded2 = deflate_zlib(&input, CompressionLevel::Best, None).unwrap();
+    let decoded = inflate(&encoded2, input.len()).unwrap();
+    assert_eq_array(&decoded, &input);
+}
+
+#[test]
+fn deflate_random_alphabet() {
+    let input = random_alphabet(b'A', b'Z', 0x10000);
     let encoded1 = deflate_zlib(&input, CompressionLevel::Fastest, None).unwrap();
     let decoded = inflate(&encoded1, input.len()).unwrap();
     assert_eq_array(&decoded, &input);

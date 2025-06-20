@@ -515,7 +515,7 @@ mod tests {
                 ] {
                     let padding_size = BitSize::new(padding_size).unwrap();
                     let value_size = BitSize::new(value_size).unwrap();
-                    println!("PADDING {padding_size} VALUE {value_size} PATTERN {pattern:08x}");
+                    // println!("PADDING {padding_size} VALUE {value_size} PATTERN {pattern:08x}");
                     let pattern_n = !pattern & mask;
 
                     let mut writer = BitStreamWriter::new();
@@ -527,7 +527,7 @@ mod tests {
                     writer.push(VarLenInteger::with_bool(true));
                     writer.extend_from_slice(tail);
                     let stream = writer.into_bytes();
-                    println!("DATA: {:02x?}", &stream);
+                    // println!("DATA: {:02x?}", &stream);
 
                     // test for read_bits
                     let mut reader = BitStreamReader::new(&stream);

@@ -246,9 +246,9 @@ impl WindowSize {
 pub enum CompressionLevel {
     /// Compress as fast as possible
     Fastest = 0,
-    /// Currently, same as `Fastest`
+    /// Currently, same as `Default`
     Fast = 1,
-    /// Currently, same as `Best`
+    /// Default compression level, balances speed and compression ratio
     #[default]
     Default = 6,
     /// Compress as much as possible

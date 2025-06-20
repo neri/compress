@@ -44,7 +44,7 @@ pub fn deflate(
 
     let mut buff = Vec::with_capacity(config.window_size.value());
 
-    LZSS::encode_lcp(input, config.lzss_config(), |lzss| {
+    LZSS::encode(input, config.lzss_config(), |lzss| {
         buff.push(DeflateLZIR::from_lzss(lzss));
         Ok(())
     })?;
@@ -436,10 +436,19 @@ impl Configuration {
         let window_size = self.window_size.value();
         let max_len = window_size.min(258);
         let skip_first_literal = 1;
-        if self.level.is_fast_method() {
-            lzss::Configuration::new(window_size, max_len, skip_first_literal, 1, 3, 0)
-        } else {
-            lzss::Configuration::new(window_size, max_len, skip_first_literal, 0, 0, 0)
+
+        match self.level {
+            CompressionLevel::Fastest => lzss::Configuration::new(window_size, max_len)
+                .skip_first_literal(skip_first_literal)
+                .number_of_attempts(1)
+                .threshold_len(3),
+            CompressionLevel::Fast | CompressionLevel::Default => {
+                lzss::Configuration::new(window_size, max_len)
+                    .skip_first_literal(skip_first_literal)
+            }
+            CompressionLevel::Best => lzss::Configuration::new(window_size, max_len)
+                .skip_first_literal(skip_first_literal)
+                .number_of_attempts(lzss::Configuration::LONG_ATTEMPTS),
         }
     }
 }
