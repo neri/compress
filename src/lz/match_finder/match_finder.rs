@@ -97,7 +97,7 @@ impl<'a> MatchFinder<'a> {
     pub fn matches<'b>(&'b self, pos: usize, min_len: usize, max_distance: usize) -> Match {
         let min_offset = pos.saturating_sub(max_distance);
         let sa_base_index = self.rev_sa[pos] as usize;
-        let takes = 16;
+        let takes = 100;
 
         let iter1 = (self.lcp().get(sa_base_index)).map(|_| {
             self.lcp()

@@ -263,7 +263,7 @@ impl CompressionLevel {
 
     #[inline]
     pub const fn is_best_method(&self) -> bool {
-        matches!(self, Self::Best | Self::Default)
+        matches!(self, Self::Best)
     }
 
     #[inline]

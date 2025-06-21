@@ -44,10 +44,17 @@ pub fn deflate(
 
     let mut buff = Vec::with_capacity(config.window_size.value());
 
-    LZSS::encode(input, config.lzss_config(), |lzss| {
-        buff.push(DeflateLZIR::from_lzss(lzss));
-        Ok(())
-    })?;
+    if config.level.is_best_method() && options.use_experimental_encoder {
+        LZSS::encode_lcp(input, config.lzss_config(), |lzss| {
+            buff.push(DeflateLZIR::from_lzss(lzss));
+            Ok(())
+        })?;
+    } else {
+        LZSS::encode(input, config.lzss_config(), |lzss| {
+            buff.push(DeflateLZIR::from_lzss(lzss));
+            Ok(())
+        })?;
+    }
 
     let mut blocks = buff
         .chunks(MIN_BLOCK_SIZE)
@@ -435,37 +442,41 @@ impl Configuration {
     pub fn lzss_config(&self) -> lzss::Configuration {
         let window_size = self.window_size.value();
         let max_len = window_size.min(258);
-        let skip_first_literal = 1;
+        let default_config = lzss::Configuration::new(window_size, max_len).skip_first_literal(1);
 
         match self.level {
-            CompressionLevel::Fastest => lzss::Configuration::new(window_size, max_len)
-                .skip_first_literal(skip_first_literal)
-                .number_of_attempts(1)
-                .threshold_len(3),
-            CompressionLevel::Fast | CompressionLevel::Default => {
-                lzss::Configuration::new(window_size, max_len)
-                    .skip_first_literal(skip_first_literal)
-            }
-            CompressionLevel::Best => lzss::Configuration::new(window_size, max_len)
-                .skip_first_literal(skip_first_literal)
-                .number_of_attempts(lzss::Configuration::LONG_ATTEMPTS),
+            CompressionLevel::Fastest => default_config.number_of_attempts(1).threshold_len(3),
+            CompressionLevel::Fast | CompressionLevel::Default => default_config,
+            CompressionLevel::Best => default_config
+                .number_of_attempts(lzss::Configuration::LONG_ATTEMPTS)
+                .threshold_len(lzss::Configuration::LONG_THRESHOLD_LEN),
         }
     }
 }
 
 pub struct OptionConfig {
     is_zlib: bool,
+    use_experimental_encoder: bool,
 }
 
 impl OptionConfig {
     #[inline]
     pub const fn new() -> Self {
-        Self { is_zlib: false }
+        Self {
+            is_zlib: false,
+            use_experimental_encoder: false,
+        }
     }
 
     #[inline]
     pub const fn zlib(mut self) -> Self {
         self.is_zlib = true;
+        self
+    }
+
+    #[inline]
+    pub const fn use_experimental(mut self) -> Self {
+        self.use_experimental_encoder = true;
         self
     }
 }

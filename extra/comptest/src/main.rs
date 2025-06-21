@@ -3,7 +3,7 @@
 //! This application is for testing purposes only and is not intended for practical use
 
 use compress::{
-    deflate::{CompressionLevel, deflate},
+    deflate::{CompressionLevel, deflate, inflate},
     lz::lzss,
 };
 use std::{env, path::Path, process};
@@ -12,15 +12,27 @@ fn main() {
     let mut args = env::args();
     let _ = args.next().unwrap();
 
+    let src_size = 0x100_0000;
+    let times = 5;
+
+    // let input = fib_str(0x55, 0xaa, src_size);
+    let input = random_ab(0x55, 0xaa, src_size);
+    // let input = random_alphabet(b'A', b'Z', src_size);
+
     let time0 = std::time::Instant::now();
     while time0.elapsed().as_secs_f64() < 1.0 {
         stabilize();
     }
 
-    let src_size = 0x10000;
-    // let input = fib_str(0x55, 0xaa, src_size);
-    let input = random_ab(0x55, 0xaa, src_size);
-    // let input = random_alphabet(b'A', b'Z', src_size);
+    let e_f = deflate(&input, CompressionLevel::Fastest, None).unwrap();
+    let d_f = inflate(&e_f, input.len()).unwrap();
+    assert_eq_array(&d_f, &input);
+    let e_d = deflate(&input, CompressionLevel::Default, None).unwrap();
+    let d_d = inflate(&e_d, input.len()).unwrap();
+    assert_eq_array(&d_d, &input);
+    let e_b = deflate(&input, CompressionLevel::Best, None).unwrap();
+    let d_b = inflate(&e_b, input.len()).unwrap();
+    assert_eq_array(&d_b, &input);
 
     #[allow(dead_code)]
     fn calc(acc: &mut usize, item: lzss::LZSS) {
@@ -31,8 +43,6 @@ fn main() {
     }
 
     for _ in 0..5 {
-        let times = 100;
-
         let time0 = std::time::Instant::now();
         let mut encode_size_fast = 0;
         for _ in 0..times {
@@ -65,7 +75,7 @@ fn main() {
         let elapsed_best = time0.elapsed();
 
         println!(
-            "times {}: fast: {:.03}kb {:.02}% {:.03}s, default: {:.03}kb {:.02}% {:.03}s best: {:.03}kb {:.02}% {:.03}s",
+            "times {}: fast: {:.01}kb {:.02}% {:.03}s, default: {:.01}kb {:.02}% {:.03}s best: {:.01}kb {:.02}% {:.03}s",
             times,
             encode_size_fast as f64 / 1024.0,
             encode_size_fast as f64 / src_size as f64 * 100.0,
@@ -152,4 +162,14 @@ fn stabilize() {
     let len = 0x1000 + (rng.next_u32() as usize & 0xfffff);
     let mut v = Vec::with_capacity(len);
     rng.fill_bytes(&mut v);
+}
+
+#[track_caller]
+fn assert_eq_array(lhs: &[u8], rhs: &[u8]) {
+    for (i, (l, r)) in lhs.iter().zip(rhs.iter()).enumerate() {
+        if *l != *r {
+            panic!("Array is not identical at index {i}\n  left: {l:02x}\n right: {r:02x}");
+        }
+    }
+    assert_eq!(lhs.len(), rhs.len(), "Array lengths are not equal");
 }

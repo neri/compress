@@ -32,6 +32,8 @@ impl Configuration {
 
     pub const THRESHOLD_LEN: usize = 16;
 
+    pub const LONG_THRESHOLD_LEN: usize = 64;
+
     // 16M = 128MB
     pub const CACHE_PURGE_LIMIT: usize = 16 * 1024 * 1024;
 
@@ -134,7 +136,7 @@ impl LZSS {
                     }
                 }
 
-                if matches.len >= LZSS::MIN_LEN as usize {
+                if matches.len > 0 {
                     let mut total_len = 0;
                     let mut left = matches.len;
                     loop {
@@ -163,15 +165,13 @@ impl LZSS {
         Ok(())
     }
 
+    /// Encode LZSS using hash algorithm
     pub fn encode<F>(input: &[u8], config: Configuration, mut f: F) -> Result<(), EncodeError>
     where
         F: FnMut(LZSS) -> Result<(), EncodeError>,
     {
         if input.is_empty() || input.len() > i32::MAX as usize {
             return Err(EncodeError::InvalidInput);
-        }
-        if config.number_of_attempts == 1 {
-            return Self::encode_fast(input, config, f);
         }
 
         let mut offset3_cache =
@@ -207,7 +207,7 @@ impl LZSS {
                     }
                 }
 
-                if matches.len >= LZSS::MIN_LEN as usize {
+                if matches.len > 0 {
                     let mut total_len = 0;
                     let mut left = matches.len;
                     loop {
@@ -236,25 +236,32 @@ impl LZSS {
         Ok(())
     }
 
-    /// Encode LZSS with Longest Common Prefix (LCP) compression
+    /// Encode LZSS with Longest Common Prefix array compression (experimental)
     pub fn encode_lcp<F>(input: &[u8], config: Configuration, mut f: F) -> Result<(), EncodeError>
     where
         F: FnMut(LZSS) -> Result<(), EncodeError>,
     {
-        if config.number_of_attempts == 1 {
-            return Self::encode_fast(input, config, f);
+        if input.is_empty() || input.len() > i32::MAX as usize {
+            return Err(EncodeError::InvalidInput);
+        }
+
+        let mut current = 1 + config.skip_first_literal;
+        for &literal in input.iter().take(current) {
+            f(LZSS::Literal(literal))?;
+        }
+
+        let window_size = 0x100000;
+        let mut low = 0;
+        let mut high = input.len().min(window_size);
+        let mut threshold = if window_size >= input.len() {
+            input.len()
         } else {
-            if input.is_empty() || input.len() > i32::MAX as usize {
-                return Err(EncodeError::InvalidInput);
-            }
-
-            let finder = MatchFinder::new(input);
-            let mut current = 1 + config.skip_first_literal;
-
-            for &literal in input.iter().take(current) {
-                f(LZSS::Literal(literal))?;
-            }
-            while let Some(&literal) = input.get(current) {
+            window_size - config.max_len
+        };
+        loop {
+            let input2 = &input[low..high];
+            let finder: MatchFinder<'_> = MatchFinder::new(input2);
+            while let Some(&literal) = input2.get(current) {
                 let count = {
                     let matches = finder.matches(current, LZSS::MIN_LEN, config.max_distance);
 
@@ -266,6 +273,9 @@ impl LZSS {
                                 f(LZSS::Match(Match::new(config.max_len, matches.distance)))?;
                                 left -= config.max_len;
                                 total_len += config.max_len;
+                                if current + total_len >= threshold {
+                                    break;
+                                }
                             } else if left >= LZSS::MIN_LEN {
                                 f(LZSS::Match(Match::new(left, matches.distance)))?;
                                 total_len += left;
@@ -282,7 +292,15 @@ impl LZSS {
                 };
                 current += count;
             }
+            if low + current == input.len() {
+                break;
+            }
+            low += current - window_size / 2;
+            high = (low + window_size).min(input.len());
+            current = window_size / 2;
+            threshold = window_size;
         }
+
         Ok(())
     }
 
