@@ -449,7 +449,7 @@ impl Configuration {
             CompressionLevel::Fast | CompressionLevel::Default => default_config,
             CompressionLevel::Best => default_config
                 .number_of_attempts(lzss::Configuration::LONG_ATTEMPTS)
-                .threshold_len(lzss::Configuration::LONG_THRESHOLD_LEN),
+                .threshold_len(max_len),
         }
     }
 }
