@@ -44,8 +44,8 @@ pub fn deflate(
 
     let mut buff = Vec::with_capacity(config.window_size.value());
 
-    if config.level.is_best_method() && options.use_experimental_encoder {
-        LZSS::encode_lcp(input, config.lzss_config(), |lzss| {
+    if options.use_experimental_encoder && matches!(config.level, CompressionLevel::Best) {
+        LZSS::encode_sa_lcp(input, config.lzss_config(), |lzss| {
             buff.push(DeflateLZIR::from_lzss(lzss));
             Ok(())
         })?;
@@ -454,6 +454,7 @@ impl Configuration {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
 pub struct OptionConfig {
     is_zlib: bool,
     use_experimental_encoder: bool,

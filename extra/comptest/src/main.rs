@@ -12,17 +12,20 @@ fn main() {
     let mut args = env::args();
     let _ = args.next().unwrap();
 
-    let src_size = 0x100_0000;
-    let times = 5;
+    const SRC_SIZE: usize = 0x10_0000;
+    let times = 10;
 
-    // let input = fib_str(0x55, 0xaa, src_size);
-    let input = random_ab(0x55, 0xaa, src_size);
-    // let input = random_alphabet(b'A', b'Z', src_size);
+    // let input = [0x55; SRC_SIZE];
+    let input = fib_str(0x55, 0xaa, SRC_SIZE);
+    // let input = random_ab(0x55, 0xaa, SRC_SIZE);
+    // let input = random_alphabet(b'A', b'Z', SRC_SIZE);
 
     let time0 = std::time::Instant::now();
     while time0.elapsed().as_secs_f64() < 1.0 {
         stabilize();
     }
+
+    let use_sa = Some(compress::deflate::OptionConfig::new().use_experimental());
 
     let e_f = deflate(&input, CompressionLevel::Fastest, None).unwrap();
     let d_f = inflate(&e_f, input.len()).unwrap();
@@ -33,6 +36,9 @@ fn main() {
     let e_b = deflate(&input, CompressionLevel::Best, None).unwrap();
     let d_b = inflate(&e_b, input.len()).unwrap();
     assert_eq_array(&d_b, &input);
+    let e_s = deflate(&input, CompressionLevel::Best, use_sa).unwrap();
+    let d_s = inflate(&e_s, input.len()).unwrap();
+    assert_eq_array(&d_s, &input);
 
     #[allow(dead_code)]
     fn calc(acc: &mut usize, item: lzss::LZSS) {
@@ -74,18 +80,30 @@ fn main() {
         }
         let elapsed_best = time0.elapsed();
 
+        let time0 = std::time::Instant::now();
+        let mut encode_size_sa = 0;
+        for _ in 0..times {
+            encode_size_sa = deflate(&input, CompressionLevel::Best, use_sa)
+                .unwrap()
+                .len();
+        }
+        let elapsed_sa = time0.elapsed();
+
         println!(
-            "times {}: fast: {:.01}kb {:.02}% {:.03}s, default: {:.01}kb {:.02}% {:.03}s best: {:.01}kb {:.02}% {:.03}s",
+            "times {}: fast: {:.01}kb {:.02}% {:.03}s, def: {:.01}kb {:.02}% {:.03}s best: {:.01}kb {:.02}% {:.03}s sa: {:.01}kb {:.02}% {:.03}s",
             times,
             encode_size_fast as f64 / 1024.0,
-            encode_size_fast as f64 / src_size as f64 * 100.0,
+            encode_size_fast as f64 / SRC_SIZE as f64 * 100.0,
             elapsed_fast.as_secs_f64(),
             encode_size_default as f64 / 1024.0,
-            encode_size_default as f64 / src_size as f64 * 100.0,
+            encode_size_default as f64 / SRC_SIZE as f64 * 100.0,
             elapsed_default.as_secs_f64(),
             encode_size_best as f64 / 1024.0,
-            encode_size_best as f64 / src_size as f64 * 100.0,
+            encode_size_best as f64 / SRC_SIZE as f64 * 100.0,
             elapsed_best.as_secs_f64(),
+            encode_size_sa as f64 / 1024.0,
+            encode_size_sa as f64 / SRC_SIZE as f64 * 100.0,
+            elapsed_sa.as_secs_f64(),
         );
     }
 }

@@ -12,7 +12,7 @@ impl LcpArray {
     pub fn new(s: &[u8], sa: &[u32], rev_sa: &[u32]) -> Vec<u32> {
         let n = s.len();
         let mut k = 0usize;
-        let mut lcp = Vec::with_capacity(n);
+        let mut lcp = Vec::new();
         lcp.resize(n, 0u32);
 
         for (i, &rank) in rev_sa.iter().enumerate() {

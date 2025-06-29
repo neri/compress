@@ -1,0 +1,11 @@
+[tasks.test]
+description = "Run a test"
+run = "cargo test"
+
+[tasks.bench]
+description = "Run a benchmark"
+run = "cargo run -p comptest --release"
+
+[tasks.flamegraph]
+description = "Generate flamegraph"
+run = "cargo flamegraph -p comptest"

@@ -1,6 +1,5 @@
 //! Suffix Array
 
-use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 
 /// Suffix Array
@@ -23,9 +22,7 @@ impl SuffixArray {
         let mut alphabet_max = 0;
         for &byte in source {
             let byte = byte as i32;
-            if byte > alphabet_max {
-                alphabet_max = byte;
-            }
+            alphabet_max = alphabet_max.max(byte);
             s.push(byte);
         }
 
@@ -59,69 +56,80 @@ impl SuffixArray {
 }
 
 /// Suffix Array Induced Sorting (SA-IS) algorithm.
+#[inline(never)]
 fn sa_is(s: &[i32], sa: &mut [i32], alphabet_max: i32) {
     let alphabet_size = (alphabet_max + 2) as usize;
 
     // classify as L and S
     let mut lors_vec = Vec::with_capacity(s.len() + 1);
-    let mut prev_data = -1;
-    let mut prev_lors = LorS::S;
-    lors_vec.push(prev_lors);
-    for &data in s.iter().rev() {
-        let lors = if data < prev_data {
-            LorS::S
-        } else if data > prev_data {
-            LorS::L
-        } else {
-            prev_lors
-        };
-        lors_vec.push(lors);
-        prev_lors = lors;
-        prev_data = data;
+    {
+        let mut prev_data = -1;
+        let mut prev_lors = LorS::S;
+        lors_vec.push(prev_lors);
+        for &data in s.iter().rev() {
+            let lors = if data < prev_data {
+                LorS::S
+            } else if data > prev_data {
+                LorS::L
+            } else {
+                prev_lors
+            };
+            lors_vec.push(lors);
+            prev_lors = lors;
+            prev_data = data;
+        }
+        lors_vec.reverse();
     }
-    lors_vec.reverse();
 
     // classify LMS substrings
     let mut lms_indexes = Vec::new();
-    for (index, pair) in windowed2(&lors_vec).enumerate() {
-        if *pair.0 == LorS::L && *pair.1 == LorS::S {
-            lms_indexes.push(1 + index as i32);
+    {
+        let mut lhs = lors_vec[0];
+        for (index, &rhs) in lors_vec.iter().enumerate().skip(1) {
+            if lhs == LorS::L && rhs == LorS::S {
+                lms_indexes.push(index as i32);
+            }
+            lhs = rhs;
         }
+        for &index in lms_indexes.iter() {
+            lors_vec[index as usize] = LorS::LMS;
+        }
+        lms_indexes.push(s.len() as i32); // sentinel
     }
-    for &index in &lms_indexes {
-        lors_vec[index as usize] = LorS::LMS;
-    }
-    lms_indexes.push(s.len() as i32); // sentinel
-
-    let mut lms_substrs = BTreeMap::new();
 
     let mut counts = Vec::new();
-    counts.resize(alphabet_size, 0i32);
-    counts[0] = 1; // sentinel
-    for &byte in s.iter() {
-        counts[1 + byte as usize] += 1;
+    {
+        counts.resize(alphabet_size, 0i32);
+        counts[0] = 1; // sentinel
+        for &alphabet in s.iter() {
+            counts[1 + alphabet as usize] += 1;
+        }
     }
 
     // phase-1
 
     // sort LMS
-    let mut buckets = make_buckets(&counts);
-    for pair in windowed2(&lms_indexes).map(|(a, b)| (*b, *a)).rev() {
-        match s.get(pair.1 as usize) {
-            Some(&byte) => {
-                let bucket = &mut buckets[1 + byte as usize];
-                let bi = *bucket as usize - 1;
-                sa[bi] = pair.1 as i32;
-                *bucket -= 1;
+    let mut lms_substrs = Vec::new();
+    {
+        lms_substrs.resize(s.len() + 1, None);
+        let mut buckets = make_buckets(&counts);
+        let buckets = &mut buckets[1..];
 
-                let mut end = pair.0 as usize;
-                if end >= s.len() {
-                    end = s.len() - 1;
+        for pair in lms_indexes.windows(2).rev() {
+            let lhs = pair[0];
+            match s.get(lhs as usize) {
+                Some(&alphabet) => {
+                    let bucket = &mut buckets[alphabet as usize];
+                    let bi = *bucket as usize - 1;
+                    sa[bi] = lhs as i32;
+                    *bucket = bi as i32;
+
+                    let end = (pair[1] as usize).min(s.len() - 1);
+                    lms_substrs[lhs as usize] = Some(&s[(lhs as usize)..=end]);
                 }
-                lms_substrs.insert(pair.1 as u32, &s[(pair.1 as usize)..=end]);
-            }
-            None => {
-                sa[0] = pair.1 as i32; // sentinel
+                None => {
+                    sa[0] = lhs as i32; // sentinel
+                }
             }
         }
     }
@@ -132,26 +140,30 @@ fn sa_is(s: &[i32], sa: &mut [i32], alphabet_max: i32) {
 
     // phase-2
     let mut lmssa = Vec::with_capacity(lms_indexes.len());
-    for &suffix in sa.iter() {
-        if suffix != -1 && lors_vec[suffix as usize].is_lms() {
-            lmssa.push(suffix);
+    {
+        for &suffix in sa.iter() {
+            if suffix != -1 && lors_vec[suffix as usize].is_lms() {
+                lmssa.push(suffix);
+            }
         }
     }
 
-    let mut name = 0;
     let mut names = Vec::with_capacity(lmssa.len());
-    names.push(0);
-    for (lhs, rhs) in windowed2(&lmssa) {
-        let lhs = lms_substrs.get(&(*lhs as u32));
-        let rhs = lms_substrs.get(&(*rhs as u32));
-        if lhs != rhs {
-            name += 1;
+    let name = {
+        let mut name = 0;
+        let mut lhs = None;
+        for rhs in &lmssa {
+            let rhs = lms_substrs[*rhs as usize];
+            if lhs != rhs {
+                name += 1;
+            }
+            names.push(name);
+            lhs = rhs;
         }
-        names.push(name);
-    }
+        name as usize
+    };
 
     if (name as usize) < names.len() - 1 {
-        // TODO: optimize this area
         let mut lms_pairs = lmssa
             .iter()
             .zip(names.iter())
@@ -176,17 +188,20 @@ fn sa_is(s: &[i32], sa: &mut [i32], alphabet_max: i32) {
     sa.fill(-1);
 
     // insert LMS
-    let mut buckets = make_buckets(&counts);
-    for &lms in lmssa.iter().rev() {
-        match s.get(lms as usize) {
-            Some(&byte) => {
-                let bucket = &mut buckets[1 + byte as usize];
-                let bi = *bucket as usize - 1;
-                sa[bi] = lms;
-                *bucket -= 1;
-            }
-            None => {
-                sa[0] = lms; // sentinel
+    {
+        let mut buckets = make_buckets(&counts);
+        let buckets = &mut buckets[1..];
+        for &lms in lmssa.iter().rev() {
+            match s.get(lms as usize) {
+                Some(&alphabet) => {
+                    let bucket = &mut buckets[alphabet as usize];
+                    let bi = *bucket as usize - 1;
+                    sa[bi] = lms;
+                    *bucket = bi as i32;
+                }
+                None => {
+                    sa[0] = lms; // sentinel
+                }
             }
         }
     }
@@ -213,12 +228,12 @@ fn sort_type_l(counts: &[i32], s: &[i32], sa: &mut [i32], lors_vec: &[LorS]) {
 
     for i in 0..sa.len() {
         let sa_i = sa[i];
-        let Some(index) = (sa_i as usize).checked_sub(1) else {
-            continue;
-        };
-        if sa_i != -1 && lors_vec[index].is_l() {
-            let byte = s[index];
-            let bucket = &mut buckets[byte as usize];
+        let index = (sa_i as usize).wrapping_sub(1);
+        if let Some(lors) = lors_vec.get(index)
+            && lors.is_l()
+        {
+            let alphabet = s[index];
+            let bucket = &mut buckets[alphabet as usize];
             let bi = *bucket as usize;
             sa[bi] = index as i32;
             *bucket += 1;
@@ -229,18 +244,19 @@ fn sort_type_l(counts: &[i32], s: &[i32], sa: &mut [i32], lors_vec: &[LorS]) {
 /// sort S-type
 fn sort_type_s(counts: &[i32], s: &[i32], sa: &mut [i32], lors_vec: &[LorS]) {
     let mut buckets = make_buckets(counts);
+    let buckets = &mut buckets[1..];
 
     for i in (0..sa.len()).rev() {
         let sa_i = sa[i];
-        let Some(index) = (sa_i as usize).checked_sub(1) else {
-            continue;
-        };
-        if sa[i] != -1 && lors_vec[index].is_s() {
-            let byte = s[index];
-            let bucket = &mut buckets[1 + byte as usize];
+        let index = (sa_i as usize).wrapping_sub(1);
+        if let Some(lors) = lors_vec.get(index)
+            && lors.is_s()
+        {
+            let alphabet = s[index];
+            let bucket = &mut buckets[alphabet as usize];
             let bi = *bucket as usize - 1;
             sa[bi] = index as i32;
-            *bucket -= 1;
+            *bucket = bi as i32;
         }
     }
 }
@@ -267,11 +283,4 @@ impl LorS {
     pub const fn is_lms(&self) -> bool {
         matches!(self, Self::LMS)
     }
-}
-
-#[inline(always)]
-fn windowed2<T>(
-    slice: &[T],
-) -> impl Iterator<Item = (&T, &T)> + ExactSizeIterator + DoubleEndedIterator {
-    slice.windows(2).map(|a| (&a[0], &a[1]))
 }

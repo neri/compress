@@ -129,11 +129,11 @@ impl LZSS {
             let count = {
                 let mut matches = Match::ZERO;
 
-                if let Some(mut iter) = offset3_cache.matches() {
-                    if let Some(distance) = iter.next() {
-                        let len = lz::matching_len(input, current + guaranteed_min_len, distance);
-                        matches = Match::new(len + guaranteed_min_len, distance);
-                    }
+                if let Some(mut iter) = offset3_cache.matches()
+                    && let Some(distance) = iter.next()
+                {
+                    let len = lz::matching_len(input, current + guaranteed_min_len, distance);
+                    matches = Match::new(len + guaranteed_min_len, distance);
                 }
 
                 if matches.len > 0 {
@@ -236,8 +236,12 @@ impl LZSS {
         Ok(())
     }
 
-    /// Encode LZSS with Longest Common Prefix array compression (experimental)
-    pub fn encode_lcp<F>(input: &[u8], config: Configuration, mut f: F) -> Result<(), EncodeError>
+    /// Encode LZSS with Suffix Array and Longest Common Prefix array compression (experimental)
+    pub fn encode_sa_lcp<F>(
+        input: &[u8],
+        config: Configuration,
+        mut f: F,
+    ) -> Result<(), EncodeError>
     where
         F: FnMut(LZSS) -> Result<(), EncodeError>,
     {
@@ -251,6 +255,7 @@ impl LZSS {
         }
 
         let window_size = 0x100000;
+        let low_base = config.max_distance.min(window_size / 2);
         let mut low = 0;
         let mut high = input.len().min(window_size);
         let mut threshold = if window_size >= input.len() {
@@ -295,9 +300,9 @@ impl LZSS {
             if low + current == input.len() {
                 break;
             }
-            low += current - window_size / 2;
+            low += current - low_base;
             high = (low + window_size).min(input.len());
-            current = window_size / 2;
+            current = low_base;
             threshold = window_size;
         }
 
