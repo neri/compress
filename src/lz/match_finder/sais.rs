@@ -229,9 +229,10 @@ fn sort_type_l(counts: &[i32], s: &[i32], sa: &mut [i32], lors_vec: &[LorS]) {
     for i in 0..sa.len() {
         let sa_i = sa[i];
         let index = (sa_i as usize).wrapping_sub(1);
-        if let Some(lors) = lors_vec.get(index)
-            && lors.is_l()
-        {
+        let Some(lors) = lors_vec.get(index) else {
+            continue;
+        };
+        if lors.is_l() {
             let alphabet = s[index];
             let bucket = &mut buckets[alphabet as usize];
             let bi = *bucket as usize;
@@ -249,9 +250,10 @@ fn sort_type_s(counts: &[i32], s: &[i32], sa: &mut [i32], lors_vec: &[LorS]) {
     for i in (0..sa.len()).rev() {
         let sa_i = sa[i];
         let index = (sa_i as usize).wrapping_sub(1);
-        if let Some(lors) = lors_vec.get(index)
-            && lors.is_s()
-        {
+        let Some(lors) = lors_vec.get(index) else {
+            continue;
+        };
+        if lors.is_s() {
             let alphabet = s[index];
             let bucket = &mut buckets[alphabet as usize];
             let bi = *bucket as usize - 1;

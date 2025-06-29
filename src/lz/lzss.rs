@@ -129,11 +129,11 @@ impl LZSS {
             let count = {
                 let mut matches = Match::ZERO;
 
-                if let Some(mut iter) = offset3_cache.matches()
-                    && let Some(distance) = iter.next()
-                {
-                    let len = lz::matching_len(input, current + guaranteed_min_len, distance);
-                    matches = Match::new(len + guaranteed_min_len, distance);
+                if let Some(mut iter) = offset3_cache.matches() {
+                    if let Some(distance) = iter.next() {
+                        let len = lz::matching_len(input, current + guaranteed_min_len, distance);
+                        matches = Match::new(len + guaranteed_min_len, distance);
+                    }
                 }
 
                 if matches.len > 0 {
