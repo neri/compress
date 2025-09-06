@@ -163,7 +163,7 @@ fn sa_is(s: &[i32], sa: &mut [i32], alphabet_max: i32) {
         name as usize
     };
 
-    if (name as usize) < names.len() - 1 {
+    if name < names.len() - 1 {
         let mut lms_pairs = lmssa
             .iter()
             .zip(names.iter())

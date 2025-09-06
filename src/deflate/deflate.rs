@@ -1,21 +1,19 @@
 //! Deflate compressor
 
 use super::*;
-use crate::{
-    entropy::{
-        entropy_of,
-        prefix::{CanonicalPrefixCoder, CanonicalPrefixDecoder, PermutationFlavor},
-    },
-    lz::{
-        Match,
-        lzss::{self, LZSS},
-    },
-    num::{
-        bits::{BitStreamWriter, Write},
-        math,
-    },
-};
 use core::f64::{self, INFINITY};
+use entropy::{
+    entropy_of,
+    prefix::{CanonicalPrefixCoder, CanonicalPrefixDecoder, PermutationFlavor},
+};
+use lz::{
+    Match,
+    lzss::{self, LZSS},
+};
+use num::{
+    bits::{BitStreamWriter, Write},
+    math,
+};
 
 /// Minimum block size in literals
 const MIN_BLOCK_SIZE: usize = 16 * 1024;
@@ -99,7 +97,7 @@ pub fn deflate(
     Ok(output.into_bytes())
 }
 
-/// Intermediate representation of deflate data
+/// Intermediate Representation of deflate data
 ///
 /// format:
 /// * bit 0-8: literal and length

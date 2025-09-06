@@ -99,12 +99,12 @@ impl BitSize {
 
     #[inline]
     pub const fn mask(&self) -> u32 {
-        (1 << *self as usize) - 1
+        1u32.wrapping_shl(*self as u32).wrapping_sub(1)
     }
 
     #[inline]
     pub const fn power_of_two(&self) -> u32 {
-        1 << *self as usize
+        1u32.wrapping_shl(*self as u32)
     }
 
     #[inline]
@@ -119,13 +119,13 @@ impl core::fmt::Display for BitSize {
     }
 }
 
-/// Counts the number of bits set in the byte array
-pub fn count_bits(array: &[u8]) -> usize {
-    array.chunks(4).fold(0, |a, v| match v.try_into() {
-        Ok(v) => a + u32::from_le_bytes(v).count_ones() as usize,
-        Err(_) => a + v.iter().fold(0, |a, v| a + v.count_ones() as usize),
-    })
-}
+// /// Counts the number of bits set in the byte array
+// pub fn count_ones(array: &[u8]) -> usize {
+//     array.chunks(4).fold(0, |a, v| match v.try_into() {
+//         Ok(v) => a + u32::from_le_bytes(v).count_ones() as usize,
+//         Err(_) => a + v.iter().fold(0, |a, v| a + v.count_ones() as usize),
+//     })
+// }
 
 /// Returns nearest power of two
 ///
