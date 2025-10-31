@@ -1,3 +1,5 @@
+//! One of the representation formats for multibyte integers
+
 use alloc::vec::Vec;
 
 /// One of the representation formats for multibyte integers

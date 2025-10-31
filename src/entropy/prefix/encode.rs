@@ -1,10 +1,8 @@
 ///! Canonical Prefix Coder
 use super::*;
-use crate::{
-    num::{bits::BitSize, *},
-    stats::*,
-    *,
-};
+use crate::num::{bits::BitSize, *};
+use crate::stats::*;
+use crate::*;
 use core::cmp;
 use core::convert::Infallible;
 

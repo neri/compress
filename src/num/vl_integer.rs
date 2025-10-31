@@ -1,15 +1,14 @@
 /// A Variable-length integer
-use super::{
-    bits::{BitSize, BitStreamWriter},
-    *,
-};
+use super::bits::{BitSize, BitStreamWriter};
+use super::*;
 use crate::*;
 use core::fmt;
+use core::num::NonZero;
 
 /// A Variable-length integer
 #[repr(transparent)]
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct VarLenInteger(u32);
+pub struct VarLenInteger(NonZero<u32>);
 
 impl VarLenInteger {
     /// # Safety
@@ -17,7 +16,7 @@ impl VarLenInteger {
     /// The `value` must fit within the `size`.
     #[inline]
     pub const unsafe fn from_raw_parts(size: BitSize, value: u32) -> Self {
-        Self(value | (size.as_u32() << 24))
+        Self(unsafe { NonZero::new_unchecked(value | (size.as_u32() << 24)) })
     }
 
     /// TODO: Remove this method in the future
@@ -66,12 +65,12 @@ impl VarLenInteger {
     #[inline]
     pub const fn size(&self) -> BitSize {
         // Safety: The value is guaranteed at initialization
-        unsafe { BitSize::new_unchecked((self.0 >> 24) as u8) }
+        unsafe { BitSize::new_unchecked((self.0.get() >> 24) as u8) }
     }
 
     #[inline]
     pub const fn value(&self) -> u32 {
-        self.0 & 0xff_ff_ff
+        self.0.get() & 0xff_ff_ff
     }
 
     #[inline]
@@ -81,7 +80,7 @@ impl VarLenInteger {
 
     pub const fn reversed(&self) -> Self {
         let size = self.size();
-        let value = self.0.reverse_bits() >> (32 - size.as_usize());
+        let value = self.0.get().reverse_bits() >> (32 - size.as_usize());
         // Safety: The value is guaranteed to be in the range of size.
         unsafe { Self::from_raw_parts(size, value) }
     }
@@ -128,6 +127,27 @@ impl VarLenInteger {
             Some(v) => a + v.size() as usize,
             None => a,
         })
+    }
+}
+
+impl From<bool> for VarLenInteger {
+    #[inline]
+    fn from(value: bool) -> Self {
+        Self::with_bool(value)
+    }
+}
+
+impl From<Nibble> for VarLenInteger {
+    #[inline]
+    fn from(value: Nibble) -> Self {
+        Self::with_nibble(value)
+    }
+}
+
+impl From<u8> for VarLenInteger {
+    #[inline]
+    fn from(value: u8) -> Self {
+        Self::with_byte(value)
     }
 }
 
