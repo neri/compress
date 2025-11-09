@@ -1,6 +1,7 @@
 //! Match Finder using Suffix Array and LCP Array
-use crate::{lz::Match, *};
-use core::ops::Range;
+use crate::lz::{Match, MaybeMatch};
+use crate::*;
+use core::{num::NonZero, ops::Range};
 use lcp::LcpArray;
 use sais::SuffixArray;
 
@@ -94,7 +95,7 @@ impl<'a> MatchFinder<'a> {
         self.buckets[byte as usize] as usize..self.buckets[1 + byte as usize] as usize
     }
 
-    pub fn matches<'b>(&'b self, pos: usize, min_len: usize, max_distance: usize) -> Match {
+    pub fn matches<'b>(&'b self, pos: usize, min_len: usize, max_distance: usize) -> Option<Match> {
         let min_offset = pos.saturating_sub(max_distance);
         let sa_base_index = self.rev_sa[pos] as usize;
         let takes = 200;
@@ -112,7 +113,7 @@ impl<'a> MatchFinder<'a> {
             lcp2.iter().zip(sa2.iter()).rev().take(takes)
         });
 
-        let mut matches = Match::ZERO;
+        let mut matches = MaybeMatch::default();
 
         let mut kernel = |lcp: &u32, offset: &u32, min_len: usize, lcp_limit: &mut usize| -> bool {
             let lcp = *lcp as usize;
@@ -123,15 +124,28 @@ impl<'a> MatchFinder<'a> {
             if offset >= min_offset && offset < pos {
                 let len = (*lcp_limit).min(lcp);
                 let distance = pos - offset;
-                if matches.is_zero() {
-                    matches = Match::new(len, distance);
-                } else if matches.len > len {
-                    return false;
-                } else if matches.len < len {
-                    matches = Match::new(len, distance);
-                } else if matches.len == len && matches.distance > distance {
-                    matches.distance = distance;
+
+                if let Some(ref mut matches2) = matches.get() {
+                    if matches.len() > len {
+                        return false;
+                    } else if matches.len() < len {
+                        matches = MaybeMatch::new(len, distance);
+                    } else if matches.len() == len && matches.distance() > distance {
+                        matches2.distance = NonZero::new(distance).unwrap();
+                    }
+                } else {
+                    matches = MaybeMatch::new(len, distance);
                 }
+
+                // if matches.is_zero() {
+                //     matches = Match::new(len, distance).into();
+                // } else if matches.len() > len {
+                //     return false;
+                // } else if matches.len() < len {
+                //     matches = Match::new(len, distance).into();
+                // } else if matches.len() == len && matches.distance() > distance {
+                //     matches.distance = distance;
+                // }
             }
             *lcp_limit = (*lcp_limit).min(lcp);
             true
@@ -143,7 +157,7 @@ impl<'a> MatchFinder<'a> {
         match (iter1, iter2) {
             (None, None) => {
                 // No iterators available
-                return Match::ZERO;
+                return None;
             }
             (Some(mut iter1), None) => {
                 while let Some((lcp, offset)) = iter1.next() {
@@ -151,7 +165,7 @@ impl<'a> MatchFinder<'a> {
                         break;
                     }
                 }
-                return matches;
+                return matches.get();
             }
             (None, Some(mut iter2)) => {
                 while let Some((lcp, offset)) = iter2.next() {
@@ -159,7 +173,7 @@ impl<'a> MatchFinder<'a> {
                         break;
                     }
                 }
-                return matches;
+                return matches.get();
             }
             (Some(mut iter1), Some(mut iter2)) => {
                 let (iter1, iter2) = loop {
@@ -185,7 +199,7 @@ impl<'a> MatchFinder<'a> {
                                 break;
                             }
                         }
-                        return matches;
+                        return matches.get();
                     }
                     (None, Some(mut iter2)) => {
                         while let Some((lcp, offset)) = iter2.next() {
@@ -193,7 +207,7 @@ impl<'a> MatchFinder<'a> {
                                 break;
                             }
                         }
-                        return matches;
+                        return matches.get();
                     }
                     _ => unreachable!(),
                 }

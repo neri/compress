@@ -20,12 +20,16 @@
 //!
 //! Related Documents: <http://osask.net/w/196.html> (But different from known final specifications)
 
-use crate::lz::{
-    self, Match, SliceWindow,
-    cache::{OffsetCache, OffsetCache3},
-};
+use crate::lz;
+use crate::lz::Match;
+use crate::lz::MaybeMatch;
+use crate::lz::SliceWindow;
+use crate::lz::cache::{OffsetCache, OffsetCache3};
 use crate::*;
-use alloc::{format, string::String, vec::Vec};
+use alloc::format;
+use alloc::string::String;
+use alloc::vec::Vec;
+use core::num::NonZero;
 
 mod s7s;
 pub use s7s::S7s;
@@ -47,7 +51,7 @@ pub struct Stk1;
 #[derive(Debug)]
 pub struct Configuration {
     max_distance: usize,
-    max_len: usize,
+    max_len: NonZero<usize>,
 }
 
 impl Configuration {
@@ -63,7 +67,7 @@ impl Configuration {
     const fn new(max_distance: usize, max_len: usize) -> Self {
         Self {
             max_distance,
-            max_len,
+            max_len: NonZero::new(max_len).unwrap(),
         }
     }
 
@@ -73,7 +77,7 @@ impl Configuration {
     }
 
     #[inline]
-    pub fn max_len(&self) -> usize {
+    pub fn max_len(&self) -> NonZero<usize> {
         self.max_len
     }
 }
@@ -124,7 +128,7 @@ impl Stk1 {
 
         while let Some(_) = input.get(cursor) {
             let count = {
-                let mut matches = Match::ZERO;
+                let mut matches = MaybeMatch::default();
 
                 // Find a long-distance match
                 if let Some(iter) = offset_cache.matches() {
@@ -136,37 +140,42 @@ impl Stk1 {
                         offset_cache.guaranteed_min_len(),
                         iter,
                     ) {
-                        Some(v) => matches = v,
+                        Some(v) => matches = v.into(),
                         None => {}
                     }
                 }
 
                 // Find a short-distance match
-                if matches.is_zero() {
+                if matches.is_none() {
                     for distance in 1..=cursor.min(LZ_SHORT_MAX_DIST) {
+                        let distance = NonZero::new(distance).unwrap();
                         let len = lz::matching_len(input, cursor, distance);
-                        if len >= LZ_SHORT_MIN_LEN && matches.len < len {
-                            matches = Match { len, distance };
+                        if len >= LZ_SHORT_MIN_LEN && matches.len() < len {
+                            matches = Match {
+                                len: NonZero::new(len).unwrap(),
+                                distance,
+                            }
+                            .into();
                         }
                     }
                 }
 
-                if matches.is_zero() {
+                if let Some(mut matches) = matches.get() {
+                    matches.clip_len(config.max_len());
+                    lz_buf.push(matches);
+                    matches.len
+                } else {
                     if lz_buf.len() > 0 {
                         Self::_flush(&mut output, lit_buf, &mut lz_buf)?;
                         lit_buf = SliceWindow::new(input, cursor);
                     } else {
                         lit_buf.expand(1);
                     }
-                    1
-                } else {
-                    matches.len = matches.len.min(config.max_len());
-                    lz_buf.push(matches);
-                    matches.len
+                    NonZero::new(1).unwrap()
                 }
             };
-            offset_cache.advance(count);
-            cursor += count;
+            offset_cache.advance(count.get());
+            cursor += count.get();
         }
         Self::_flush(&mut output, lit_buf, &mut lz_buf)?;
 
@@ -197,8 +206,8 @@ impl Stk1 {
         output.extend_from_slice(lit_buf.into_slice());
 
         for matches in lz_buf.iter() {
-            let lz_len = matches.len - 1;
-            let distance = matches.distance - 1;
+            let lz_len = matches.len.get() - 1;
+            let distance = matches.distance.get() - 1;
             let (dist_lead, dist_len, dist_trail) = if distance < 8 {
                 ((distance << 1) as u8 | 0x01, 0, 0)
             } else if distance < 0x4_00 {

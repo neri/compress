@@ -2,18 +2,12 @@
 
 use super::*;
 use core::f64::{self, INFINITY};
-use entropy::{
-    entropy_of,
-    prefix::{CanonicalPrefixCoder, CanonicalPrefixDecoder, PermutationFlavor},
-};
-use lz::{
-    Match,
-    lzss::{self, LZSS},
-};
-use num::{
-    bits::{BitStreamWriter, Write},
-    math,
-};
+use entropy::entropy_of;
+use entropy::prefix::{CanonicalPrefixCoder, CanonicalPrefixDecoder, PermutationFlavor};
+use lz::Match;
+use lz::lzss::{self, LZSS};
+use num::bits::{BitStreamWriter, Write};
+use num::math;
 
 /// Minimum block size in literals
 const MIN_BLOCK_SIZE: usize = 16 * 1024;
@@ -37,7 +31,7 @@ pub fn deflate(
 ) -> Result<Vec<u8>, EncodeError> {
     let mut config = Configuration::DEFAULT;
     config.level = level;
-    config.window_size = WindowSize::preferred(input.len());
+    config.window_size = WindowSize::preferred_for(input.len());
     let options = options.unwrap_or_default();
 
     let mut buff = Vec::with_capacity(config.window_size.value());
@@ -58,12 +52,15 @@ pub fn deflate(
         .chunks(MIN_BLOCK_SIZE)
         .map(|chunk| DeflateIrBlock::new(chunk))
         .collect::<Vec<_>>();
-    let last = blocks.last_mut().unwrap();
+    let Some(last) = blocks.last_mut() else {
+        panic!("Internal error: no blocks generated");
+        // return Err(EncodeError::InternalInconsistency);
+    };
     last.is_final = true;
 
     let mut output = BitStreamWriter::new();
     if options.is_zlib {
-        let cmf = ((config.window_size.value().trailing_zeros() as u8 - 8) << 4) | 0x08;
+        let cmf = ((config.window_size as u8) << 4) | 0x08;
         let mut flg = config.level.zlib_flevel() << 6;
         let fcheck = 31 - (cmf as u16 * 256 + flg as u16) % 31;
         flg |= fcheck as u8;
@@ -125,8 +122,8 @@ impl DeflateLZIR {
 
     #[inline]
     pub fn with_match(matches: Match) -> Self {
-        let len = LenType::new(matches.len as u32).unwrap();
-        let dist = DistanceType::new(matches.distance as u32).unwrap();
+        let len = LenType::new(matches.len.get() as u32).unwrap();
+        let dist = DistanceType::new(matches.distance.get() as u32).unwrap();
         let lit_len = len.leading() as u32 + 257;
         let dist_code = dist.leading() as u32;
         let len_extra = len.trailing().map(|v| v.value()).unwrap_or_default();

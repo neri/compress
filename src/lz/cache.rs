@@ -2,9 +2,10 @@
 
 use crate::*;
 use alloc::vec;
+use core::num::NonZero;
 
 macro_rules! def_key {
-    ($magic_number:expr, $trait_name:ident, $class_name:ident, $inner_class:ident, $mask:expr) => {
+    ($magic_number:expr, $trait_name:ident, $class_name:ident, $storage_class:ident, $mask:expr) => {
         pub trait $trait_name
         where
             Self::ElementType: Copy,
@@ -26,11 +27,11 @@ macro_rules! def_key {
 
         #[repr(transparent)]
         #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-        pub struct $class_name($inner_class);
+        pub struct $class_name($storage_class);
 
         impl $trait_name for $class_name {
             type ElementType = u8;
-            type KeyType = $inner_class;
+            type KeyType = $storage_class;
 
             #[inline]
             fn null() -> Self {
@@ -43,7 +44,7 @@ macro_rules! def_key {
                     values
                         .iter()
                         .rev()
-                        .fold(0, |a, &b| (a << 8) | (b as $inner_class)),
+                        .fold(0, |a, &b| (a << 8) | (b as $storage_class)),
                 )
             }
 
@@ -59,7 +60,8 @@ macro_rules! def_key {
 
             #[inline]
             fn advance(&mut self, new_value: Self::ElementType) {
-                self.0 = (self.0 >> 8) | ((new_value as $inner_class) << (8 * ($magic_number - 1)));
+                self.0 =
+                    (self.0 >> 8) | ((new_value as $storage_class) << (8 * ($magic_number - 1)));
             }
         }
     };
@@ -149,7 +151,7 @@ macro_rules! def_cache {
                 self.cursor = cursor;
             }
 
-            fn matches<'a>(&'a self) -> Option<impl Iterator<Item = usize> + 'a> {
+            fn matches<'a>(&'a self) -> Option<impl Iterator<Item = NonZero<usize>> + 'a> {
                 if self.cursor >= self.limit {
                     return None;
                 }
@@ -165,7 +167,7 @@ macro_rules! def_cache {
                 }
                 let min_value = self.cursor.saturating_sub(self.max_distance);
                 self.cache.get(&self.key.key_value()).and_then(|v| {
-                    let nearest = v.nearest() as usize;
+                    let nearest = v.nearest().unwrap() as usize;
                     (nearest >= min_value).then(|| self.cursor - nearest)
                 })
             }
@@ -196,7 +198,7 @@ def_cache!(8, Matching8Cache, MatchingKey8, Matching8BKey, OffsetCache8);
 pub trait OffsetCache {
     fn advance(&mut self, step: usize);
 
-    fn matches<'a>(&'a self) -> Option<impl Iterator<Item = usize> + 'a>;
+    fn matches<'a>(&'a self) -> Option<impl Iterator<Item = NonZero<usize>> + 'a>;
 
     fn nearest(&self) -> Option<usize>;
 
@@ -240,6 +242,7 @@ impl MatchingKey3 for Matching3WKey {
     }
 }
 
+/// Least Recently Used vector of 3 elements
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub struct LruVec3<T>([T; 3]);
 
@@ -272,18 +275,15 @@ impl OffsetList {
     }
 
     #[inline]
-    #[track_caller]
-    pub fn nearest(&self) -> u32 {
-        *self.inner.last().unwrap()
+    pub fn nearest(&self) -> Option<u32> {
+        self.inner.last().copied()
     }
 
     pub fn retain(&mut self, min_value: u32) -> bool {
-        if self.inner.is_empty() {
-            // just in case
-            return false;
-        }
-        if self.nearest() < min_value {
-            return false;
+        match self.nearest() {
+            None => return false,
+            Some(v) if v < min_value => return false,
+            _ => {}
         }
         for (index, item) in self.inner.iter().enumerate().rev() {
             if *item < min_value {
@@ -300,7 +300,7 @@ impl OffsetList {
         &'a self,
         current: usize,
         min_value: usize,
-    ) -> impl Iterator<Item = usize> + 'a {
+    ) -> impl Iterator<Item = NonZero<usize>> + 'a {
         Distances {
             iter: self.inner.iter(),
             current,
@@ -316,14 +316,14 @@ struct Distances<'a> {
 }
 
 impl Iterator for Distances<'_> {
-    type Item = usize;
+    type Item = NonZero<usize>;
 
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         if let Some(&value) = self.iter.next_back() {
             let value = value as usize;
             if value >= self.min_value {
-                return Some(self.current - value);
+                return NonZero::new(self.current - value);
             }
         }
         None

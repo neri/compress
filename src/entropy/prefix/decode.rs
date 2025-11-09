@@ -1,13 +1,11 @@
 //! Canonical Prefix Decoder
 
 use super::*;
-use crate::{
-    num::{
-        VarLenInteger,
-        bits::{BitSize, BitStreamReader},
-    },
-    *,
+use crate::num::{
+    VarLenInteger,
+    bits::{BitSize, BitStreamReader},
 };
+use crate::*;
 use core::cmp;
 
 /// The maximum number of bits to peek in the lookup table.
@@ -42,7 +40,7 @@ impl CanonicalPrefixDecoder {
     }
 
     /// Creates a new `CanonicalPrefixDecoder` with the given lengths.
-    pub fn with_lengths(lengths: &[u8], is_lzss_lit: bool) -> Result<Self, DecodeError> {
+    pub fn with_lengths(lengths: &[u8], is_lit: bool) -> Result<Self, DecodeError> {
         let prefix_table =
             Self::make_prefix_table(lengths.iter().enumerate().map(|(i, &v)| (i, v)), true)?;
 
@@ -67,7 +65,7 @@ impl CanonicalPrefixDecoder {
             .min()
             .ok_or(DecodeError::InvalidData)?;
 
-        let peek_bits = if is_lzss_lit {
+        let peek_bits = if is_lit {
             (max_bits * 2).min(MAX_LOOKUP_TABLE_BITS)
         } else {
             max_bits.min(MAX_LOOKUP_TABLE_BITS)
@@ -85,7 +83,7 @@ impl CanonicalPrefixDecoder {
             decoder.insert_node(path, value as u16)?;
         }
 
-        if is_lzss_lit {
+        if is_lit {
             // For LZSS literal and length codes
             decoder
                 .lookup_table2
@@ -558,6 +556,7 @@ impl LitLen2 {
         } else if value == 256 {
             Self::EndOfBlock([0, 0, 0])
         } else {
+            // value >= 0x101 (257)
             Self::Length((value.wrapping_sub(1) & 0xff) as u8)
         }
     }
@@ -583,18 +582,41 @@ fn literal2_repr() {
     let entry = LookupTableEntry2::new(lit_len, bits);
     assert_eq!(entry.bit_len(), Some(bits));
     assert_eq!(entry.into_lit_len(), lit_len);
+    assert_ne!(entry.into_lit_len(), LitLen2::Length(0x34));
+    assert_ne!(entry.into_lit_len(), LitLen2::Single(0x12));
+    assert_ne!(entry.into_lit_len(), LitLen2::Double(0x12, 0x34));
+    assert_ne!(
+        entry.into_lit_len(),
+        LitLen2::EndOfBlock([0x12, 0x34, 0x56])
+    );
 
     let lit_len = LitLen2::Single(0x34);
     let bits = BitSize::Bit7;
     let entry = LookupTableEntry2::new(lit_len, bits);
     assert_eq!(entry.bit_len(), Some(bits));
     assert_eq!(entry.into_lit_len(), lit_len);
+    assert_ne!(entry.into_lit_len(), LitLen2::Length(0x34));
+    assert_ne!(entry.into_lit_len(), LitLen2::Single(0x56));
+    assert_ne!(entry.into_lit_len(), LitLen2::Double(0x34, 0x56));
+    assert_ne!(
+        entry.into_lit_len(),
+        LitLen2::EndOfBlock([0x34, 0x56, 0x78])
+    );
 
     let lit_len = LitLen2::Double(0x56, 0x78);
     let bits = BitSize::Bit11;
     let entry = LookupTableEntry2::new(lit_len, bits);
     assert_eq!(entry.bit_len(), Some(bits));
     assert_eq!(entry.into_lit_len(), lit_len);
+    assert_ne!(entry.into_lit_len(), LitLen2::Length(0x56));
+    assert_ne!(entry.into_lit_len(), LitLen2::Single(0x56));
+    assert_ne!(entry.into_lit_len(), LitLen2::Double(0x56, 0x56));
+    assert_ne!(entry.into_lit_len(), LitLen2::Double(0x78, 0x78));
+    assert_ne!(entry.into_lit_len(), LitLen2::Double(0x78, 0x56));
+    assert_ne!(
+        entry.into_lit_len(),
+        LitLen2::EndOfBlock([0x56, 0x78, 0x9a])
+    );
 
     let bits = BitSize::Bit13;
     let entry = LookupTableEntry2::new(LitLen2::EndOfBlock([0x12, 0x34, 0x56]), bits);

@@ -9,6 +9,7 @@ use core::convert::Infallible;
 pub struct CanonicalPrefixCoder;
 
 impl CanonicalPrefixCoder {
+    /// Creates a prefix table from the frequency table.
     pub fn make_prefix_table(
         freq_table: &[usize],
         max_len: BitSize,
@@ -23,17 +24,20 @@ impl CanonicalPrefixCoder {
             cmp::Ordering::Equal => a.0.cmp(&b.0),
             ord => ord,
         });
-        let prefix_table = CanonicalPrefixCoder::generate_prefix_table(&freq_table, max_len, None);
-        let max_symbol = prefix_table.iter().fold(0usize, |a, v| a.max((v.0).into()));
-        let mut prefix_map = Vec::new();
-        prefix_map.resize((1 + max_symbol).max(min_size), None);
-        for item in prefix_table.iter() {
-            prefix_map[item.0] = Some(item.1);
+        let mapping_table =
+            CanonicalPrefixCoder::generate_prefix_mapping_table(&freq_table, max_len, None);
+        let max_symbol = mapping_table
+            .iter()
+            .fold(0usize, |a, v| a.max((v.0).into()));
+        let mut prefix_table = Vec::new();
+        prefix_table.resize((1 + max_symbol).max(min_size), None);
+        for item in mapping_table.iter() {
+            prefix_table[item.0] = Some(item.1);
         }
-        prefix_map
+        prefix_table
     }
 
-    pub fn generate_prefix_table<K>(
+    pub fn generate_prefix_mapping_table<K>(
         freq_table: &[(K, usize)],
         max_len: BitSize,
         ref_tree: Option<&mut Vec<HuffmanTreeNode<K>>>,
@@ -104,22 +108,23 @@ impl CanonicalPrefixCoder {
             }
         }
 
-        let mut prefix_table = freq_table
+        let mut mapping_table = freq_table
             .iter()
             .zip(prefix_codes.iter())
             .map(|(a, &b)| (a.0, b))
             .collect::<Vec<_>>();
-        prefix_table.sort_by(|a, b| match a.1.size().cmp(&b.1.size()) {
+        mapping_table.sort_by(|a, b| match a.1.size().cmp(&b.1.size()) {
             cmp::Ordering::Equal => a.0.cmp(&b.0),
             ord => ord,
         });
-        for (p, &q) in prefix_table.iter_mut().zip(prefix_codes.iter()) {
+        for (p, &q) in mapping_table.iter_mut().zip(prefix_codes.iter()) {
             p.1 = q;
         }
 
-        prefix_table
+        mapping_table
     }
 
+    /// Adjust the prefix lengths to fit within the maximum length.
     fn _adjust_prefix_lengths(prefix_len_table: &mut [usize], max_len: BitSize) {
         let max_len = max_len as usize;
         if prefix_len_table.len() <= max_len {
@@ -216,7 +221,7 @@ impl CanonicalPrefixCoder {
     pub fn encode_single_prefix_table(
         input: &[Option<VarLenInteger>],
         permutation_flavor: PermutationFlavor,
-    ) -> Result<MetaPrefixTable, Infallible> {
+    ) -> Result<EncodedPrefixTable, Infallible> {
         let table0 = input
             .iter()
             .map(|v| match v {
@@ -230,7 +235,7 @@ impl CanonicalPrefixCoder {
     pub fn encode_prefix_tables(
         tables: &[&[u8]],
         permutation_flavor: PermutationFlavor,
-    ) -> Result<MetaPrefixTable, Infallible> {
+    ) -> Result<EncodedPrefixTable, Infallible> {
         let permutation_order = permutation_flavor.permutation_order();
 
         let hlits = tables.iter().map(|v| v.len()).collect::<Vec<_>>();
@@ -250,19 +255,19 @@ impl CanonicalPrefixCoder {
         }
         let freq_table = freq_table.into_freq_table(true);
 
-        let prefix_table =
-            CanonicalPrefixCoder::generate_prefix_table(&freq_table, BitSize::Bit7, None);
-        let mut prefix_map = [None; 20];
-        for prefix in prefix_table.iter() {
+        let mapping_table =
+            CanonicalPrefixCoder::generate_prefix_mapping_table(&freq_table, BitSize::Bit7, None);
+        let mut prefix_table = [None; 20];
+        for prefix in mapping_table.iter() {
             assert!(prefix.1.size() < BitSize::OCTET);
-            prefix_map[prefix.0 as usize] = Some(prefix.1);
+            prefix_table[prefix.0 as usize] = Some(prefix.1);
         }
 
         let mut compressed_table = Vec::new();
         for table in tables.iter() {
             for &item in table.iter() {
                 if item.size() == BitSize::OCTET {
-                    let prefix_code = prefix_map[item.value() as usize].unwrap();
+                    let prefix_code = prefix_table[item.value() as usize].unwrap();
                     compressed_table.push(prefix_code.reversed());
                 } else {
                     compressed_table.push(item);
@@ -273,7 +278,7 @@ impl CanonicalPrefixCoder {
         let mut prefix_sizes = [None; 19];
         let mut max_index = 3;
         for (p, &q) in permutation_order.iter().enumerate() {
-            if let Some(item) = prefix_map[q as usize] {
+            if let Some(item) = prefix_table[q as usize] {
                 max_index = max_index.max(p);
                 prefix_sizes[p] = Some(item.size());
             }
@@ -289,7 +294,7 @@ impl CanonicalPrefixCoder {
             );
         }
 
-        Ok(MetaPrefixTable {
+        Ok(EncodedPrefixTable {
             hlits,
             hclen: Nibble::new(max_index as u8 - 3).unwrap(),
             prefix_table,
@@ -300,7 +305,7 @@ impl CanonicalPrefixCoder {
 }
 
 #[derive(Debug)]
-pub struct MetaPrefixTable {
+pub struct EncodedPrefixTable {
     pub hlits: Vec<usize>,
     pub hclen: Nibble,
     pub prefix_table: Vec<VarLenInteger>,

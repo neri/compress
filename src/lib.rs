@@ -35,6 +35,7 @@ pub enum EncodeError {
     InvalidData,
     OutOfMemory,
     EntropyError,
+    InternalInconsistency,
 }
 
 /// A Fibonacci word generator for testing purposes.

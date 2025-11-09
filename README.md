@@ -1,4 +1,4 @@
-# My compression library (temp)
+# My compression library (WIP)
 
 ## Features
 

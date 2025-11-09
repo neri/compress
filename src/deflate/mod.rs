@@ -2,13 +2,11 @@
 //!
 //! See also: <https://www.ietf.org/rfc/rfc1951.txt>
 
-use crate::{
-    num::{
-        VarLenInteger,
-        bits::{BitSize, BitStreamReader},
-    },
-    *,
+use crate::num::{
+    VarLenInteger,
+    bits::{BitSize, BitStreamReader},
 };
+use crate::*;
 
 #[cfg(test)]
 mod tests;
@@ -211,19 +209,19 @@ static VARIABLE_LENGTH_BASE_TABLE: [(Option<BitSize>, u32); 29] = [
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub enum WindowSize {
     Size256 = 0,
-    Size512,
-    Size1024,
-    Size2048,
-    Size4096,
-    Size8192,
-    Size16384,
+    Size512 = 1,
+    Size1024 = 2,
+    Size2048 = 3,
+    Size4096 = 4,
+    Size8192 = 5,
+    Size16384 = 6,
     #[default]
-    Size32768,
+    Size32768 = 7,
 }
 
 impl WindowSize {
     #[inline]
-    pub const fn preferred(size: usize) -> Self {
+    pub const fn preferred_for(size: usize) -> Self {
         match size {
             ..=256 => Self::Size256,
             ..=512 => Self::Size512,

@@ -11,21 +11,24 @@ pub mod match_finder;
 mod slice_window;
 pub use slice_window::*;
 
+use core::num::NonZero;
+
 #[inline]
 #[track_caller]
-pub fn matching_len<T>(data: &[T], current: usize, distance: usize) -> usize
+pub fn matching_len<T>(data: &[T], current: usize, distance: NonZero<usize>) -> usize
 where
     T: Sized + Copy + PartialEq,
 {
     debug_assert!(
-        data.len() >= current && distance != 0 && current >= distance,
+        data.len() >= current && current >= distance.get(),
         "INVALID MATCHES: LEN {} CURRENT {} DISTANCE {}",
         data.len(),
         current,
-        distance
+        distance.get(),
     );
     unsafe {
         // Safety: `data` is guaranteed to be valid, and `current` and `distance` are checked.
+        let distance = distance.get();
         let max_len = data.len() - current;
         let p = data.as_ptr().add(current);
         let q = data.as_ptr().add(current - distance);
@@ -46,49 +49,104 @@ pub fn find_distance_matches<T: Sized + Copy + PartialEq>(
     threshold_min: usize,
     threshold_max: usize,
     guaranteed_min_len: usize,
-    dist_iter: impl Iterator<Item = usize>,
+    dist_iter: impl Iterator<Item = NonZero<usize>>,
 ) -> Option<Match> {
     let threshold_min_len = threshold_min.saturating_sub(guaranteed_min_len);
     let threshold_max_len = threshold_max.saturating_sub(guaranteed_min_len);
     let cursor = cursor + guaranteed_min_len;
-    let mut matches = Match::ZERO;
+    let mut matches = MaybeMatch::default();
     for distance in dist_iter {
         let len = matching_len(input, cursor, distance) + guaranteed_min_len;
-        if matches.len < len {
-            matches = Match::new(len, distance);
-            if matches.len >= threshold_max_len {
+        if matches.len() < len {
+            matches = Match::new(NonZero::new(len).unwrap(), distance).into();
+            if matches.len() >= threshold_max_len {
                 break;
             }
         }
     }
-    (matches.len >= threshold_min_len as usize).then(|| matches)
+    (matches.len() >= threshold_min_len as usize)
+        .then(|| matches.get())
+        .flatten()
 }
 
 /// Matching distance and length
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Match {
-    pub len: usize,
-    pub distance: usize,
+    pub len: NonZero<usize>,
+    pub distance: NonZero<usize>,
 }
 
 impl Match {
-    pub const ZERO: Self = Self::new(0, 0);
-
     #[inline]
-    pub const fn new(len: usize, distance: usize) -> Self {
+    pub const fn new(len: NonZero<usize>, distance: NonZero<usize>) -> Self {
         Self { len, distance }
     }
 
     #[inline]
-    pub const fn is_zero(&self) -> bool {
-        self.len == 0
+    pub fn clip_len(&mut self, limit: NonZero<usize>) {
+        if self.len > limit {
+            self.len = limit;
+        }
     }
 }
 
-impl Default for Match {
+/// Wrapper class for Option<Match>
+#[repr(transparent)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct MaybeMatch(Option<Match>);
+
+impl MaybeMatch {
     #[inline]
-    fn default() -> Self {
-        Self::ZERO
+    pub const fn new(len: usize, distance: usize) -> Self {
+        let len = NonZero::new(len);
+        let distance = NonZero::new(distance);
+        if let Some(len) = len
+            && let Some(distance) = distance
+        {
+            Self(Some(Match { len, distance }))
+        } else {
+            Self(None)
+        }
+    }
+
+    #[inline]
+    pub const fn len(&self) -> usize {
+        match self.0 {
+            Some(m) => m.len.get(),
+            None => 0,
+        }
+    }
+
+    #[inline]
+    pub fn clip_len(&mut self, limit: NonZero<usize>) {
+        if let Some(m) = &mut self.0 {
+            m.clip_len(limit);
+        }
+    }
+
+    #[inline]
+    pub const fn distance(&self) -> usize {
+        match self.0 {
+            Some(m) => m.distance.get(),
+            None => 0,
+        }
+    }
+
+    #[inline]
+    pub const fn is_none(&self) -> bool {
+        self.0.is_none()
+    }
+
+    #[inline]
+    pub const fn get(&self) -> Option<Match> {
+        self.0
+    }
+}
+
+impl From<Match> for MaybeMatch {
+    #[inline]
+    fn from(m: Match) -> Self {
+        Self(Some(m))
     }
 }
 
